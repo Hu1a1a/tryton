@@ -1,0 +1,6 @@
+Babel
+Sphinx
+cookiecutter
+rnc2rng
+sphinx-lint
+tox

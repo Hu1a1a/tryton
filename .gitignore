@@ -1,0 +1,10 @@
+venv 
+node_modules
+bower_components
+dist 
+build
+__pycache__
+{{ cookiecutter.module_name }}
+doc
+tests
+*.egg-info
