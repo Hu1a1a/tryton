@@ -8,3 +8,5 @@ __pycache__
 doc
 tests
 *.egg-info
+sao/locale
+package-lock.json

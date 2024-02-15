@@ -8,9 +8,6 @@ call .\venv\Scripts\activate.bat
 python .hooks/link_modules
 **cmd con administrador**
 
-python .hooks/update_requirements
-**Hay que crear "requirements.txt"**
-
 pip install -e trytond -e tryton -e proteus
 pip install -r requirements.txt -r requirements-dev.txt
 ```
@@ -23,15 +20,17 @@ npm i -g grunt-cli
 
 ### for dev
 grunt dev 
-
 ### for production
 grunt default
+use just grunt
 ```
 
 ## trytond:
 
 ```console
 pip install .
+python bin/trytond-admin -c trytond.conf -d tryton -p
+python bin/trytond-admin -c trytond.conf -d tryton --all
 python bin/trytond -c trytond.conf
 ```
 
