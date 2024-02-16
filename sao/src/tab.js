@@ -461,6 +461,10 @@
             id: tab.id
         }).append(tab.el)
         .appendTo(tabcontent);
+        tab_link.on('click',function(evt){
+            console.log(evt);
+        });
+        console.log(tab_link);
         tab_link.on('hide.bs.tab', function(evt) {
             jQuery(evt.target).data('scrollTop', tabs.scrollTop());
         });
