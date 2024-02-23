@@ -1,12 +1,8 @@
 # This file is part of Tryton.  The COPYRIGHT file at the top level of
 # this repository contains the full copyright notices and license terms.
 import mimetypes
-from email.encoders import encode_base64
-from email.header import Header
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.nonmultipart import MIMENonMultipart
-from email.utils import formataddr, getaddresses
+from email.headerregistry import Address
+from email.utils import getaddresses
 
 from genshi.template import TextTemplate
 
@@ -174,7 +170,7 @@ class Email(ModelSQL, ModelView):
         Attachment = pool.get('notification.email.attachment')
 
         # TODO order languages to get default as last one for title
-        content, title = get_email(self.content, record, languages)
+        msg, title = get_email(self.content, record, languages)
         language = list(languages)[-1]
         from_ = sender
         with Transaction().set_context(language=language.code):
@@ -187,21 +183,22 @@ class Email(ModelSQL, ModelView):
                     .render())
 
         if self.attachments:
-            msg = MIMEMultipart('mixed')
-            msg.attach(content)
             for report in self.attachments:
-                msg.attach(Attachment.get_mime(report, record, language.code))
-        else:
-            msg = content
+                name, data = Attachment.get(report, record, language.code)
+                ctype, _ = mimetypes.guess_type(name)
+                if not ctype:
+                    ctype = 'application/octet-stream'
+                maintype, subtype = ctype.split('/', 1)
+                msg.add_attachment(
+                    data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    filename=('utf-8', '', name))
 
         set_from_header(msg, sender, from_)
-        msg['To'] = ', '.join(
-            formataddr((n, convert_ascii_email(a)))
-            for n, a in getaddresses(to))
-        msg['Cc'] = ', '.join(
-            formataddr((n, convert_ascii_email(a)))
-            for n, a in getaddresses(cc))
-        msg['Subject'] = Header(title, 'utf-8')
+        msg['To'] = [Address(n, addr_spec=a) for n, a in getaddresses(to)]
+        msg['Cc'] = [Address(n, addr_spec=a) for n, a in getaddresses(cc)]
+        msg['Subject'] = title
         msg['Auto-Submitted'] = 'auto-generated'
         return msg, title
 
@@ -351,7 +348,7 @@ class EmailAttachment(ModelSQL):
         return self.notification.model
 
     @classmethod
-    def get_mime(cls, report, record, language):
+    def get(cls, report, record, language):
         pool = Pool()
         Report = pool.get(report.report_name, type='report')
         with Transaction().set_context(language=language):
@@ -360,18 +357,6 @@ class EmailAttachment(ModelSQL):
                     'action_id': report.id,
                     })
         name = '%s.%s' % (title, ext)
-        mimetype, _ = mimetypes.guess_type(name)
-        if mimetype:
-            msg = MIMENonMultipart(*mimetype.split('/'))
-            msg.set_payload(content)
-            encode_base64(msg)
-        else:
-            msg = MIMEApplication(content)
-        if not isinstance(name, str):
-            name = name.encode('utf-8')
-        if not isinstance(language, str):
-            language = language.encode('utf-8')
-        msg.add_header(
-            'Content-Disposition', 'attachment',
-            filename=('utf-8', language, name))
-        return msg
+        if isinstance(content, str):
+            content = content.encode('utf-8')
+        return name, content

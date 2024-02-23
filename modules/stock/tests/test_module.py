@@ -8,9 +8,12 @@ from functools import partial
 
 from dateutil.relativedelta import relativedelta
 
-from trytond.exceptions import UserError, UserWarning
+from trytond.model.exceptions import AccessError
 from trytond.modules.company.tests import (
     CompanyTestMixin, PartyCompanyCheckEraseMixin, create_company, set_company)
+from trytond.modules.stock.exceptions import (
+    LocationValidationError, MoveOriginWarning, PeriodCloseError,
+    ProductStockWarning)
 from trytond.pool import Pool
 from trytond.tests.test_tryton import ModuleTestCase, with_transaction
 from trytond.transaction import Transaction
@@ -950,7 +953,7 @@ class StockTestCase(
                         }])
             Move.do(moves)
 
-            self.assertRaises(Exception, Move.create, [{
+            self.assertRaises(AccessError, Move.create, [{
                         'product': product.id,
                         'unit': unit.id,
                         'quantity': 10,
@@ -962,7 +965,7 @@ class StockTestCase(
                         'unit_price': Decimal('1'),
                         'currency': currency.id,
                         }])
-            self.assertRaises(Exception, Move.create, [{
+            self.assertRaises(AccessError, Move.create, [{
                         'product': product.id,
                         'unit': unit.id,
                         'quantity': 10,
@@ -980,13 +983,13 @@ class StockTestCase(
                         'date': today,
                         'company': company.id,
                         }])
-            self.assertRaises(Exception, Period.close, [period])
+            self.assertRaises(PeriodCloseError, Period.close, [period])
 
             period, = Period.create([{
                         'date': today + relativedelta(days=1),
                         'company': company.id,
                         }])
-            self.assertRaises(Exception, Period.close, [period])
+            self.assertRaises(PeriodCloseError, Period.close, [period])
 
     @with_transaction()
     def test_check_origin(self):
@@ -1024,7 +1027,7 @@ class StockTestCase(
 
             Move.check_origin(moves, set())
             Move.check_origin(moves, {'supplier'})
-            self.assertRaises(UserWarning, Move.check_origin, moves,
+            self.assertRaises(MoveOriginWarning, Move.check_origin, moves,
                 {'customer'})
 
     def test_assign_try(self):
@@ -1520,7 +1523,7 @@ class StockTestCase(
                         'company': company.id,
                         }])
             Move.do(moves)
-            with self.assertRaises(UserError):
+            with self.assertRaises(LocationValidationError):
                 location.active = False
                 location.save()
 
@@ -1564,7 +1567,7 @@ class StockTestCase(
                         'to_location': storage.id,
                         'company': company.id,
                         }])
-            with self.assertRaises(UserError):
+            with self.assertRaises(LocationValidationError):
                 location.active = False
                 location.save()
 
@@ -1610,8 +1613,11 @@ class StockTestCase(
                         'currency': company.currency.id,
                         'company': company.id,
                         }])
-            with self.assertRaises(UserWarning):
+            with self.assertRaises(ProductStockWarning):
                 Product.write(products, {'active': False})
+
+            with self.assertRaises(ProductStockWarning):
+                Template.write([template], {'active': False})
 
             Move.create([{
                         'product': product.id,
@@ -1632,6 +1638,7 @@ class StockTestCase(
                         'currency': company.currency.id,
                         'company': company.id,
                         }])
+            Template.write([template], {'active': False})
             Product.write(products, {'active': False})
 
     @with_transaction()
@@ -1667,8 +1674,11 @@ class StockTestCase(
                         'currency': company.currency.id,
                         'company': company.id,
                         }])
-            with self.assertRaises(UserWarning):
+            with self.assertRaises(ProductStockWarning):
                 Product.write(products, {'active': False})
+
+            with self.assertRaises(ProductStockWarning):
+                Template.write([template], {'active': False})
 
             Move.create([{
                         'product': product.id,
@@ -1680,6 +1690,7 @@ class StockTestCase(
                         'currency': company.currency.id,
                         'company': company.id,
                         }])
+            Template.write([template], {'active': False})
             Product.write(products, {'active': False})
 
     @with_transaction()
