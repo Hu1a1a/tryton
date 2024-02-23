@@ -85,6 +85,23 @@ class ShipmentMixin:
         table, _ = tables[None]
         return [Coalesce(table.effective_date, table.planned_date)]
 
+    @classmethod
+    def set_number(cls, shipments):
+        '''
+        Fill the number field from sequence
+        '''
+        pool = Pool()
+        Config = pool.get('stock.configuration')
+
+        config = Config(1)
+        sequence = cls.__name__[len('stock.'):].replace('.', '_')
+        for shipment in shipments:
+            if not shipment.number:
+                shipment.number = config.get_multivalue(
+                    sequence + '_sequence',
+                    company=shipment.company.id).get()
+        cls.save(shipments)
+
     def get_delay(self, name):
         pool = Pool()
         Date = pool.get('ir.date')
@@ -407,8 +424,12 @@ class ShipmentIn(
                 },
             help="The moves that put the stock away into the storage area."),
         'get_inventory_moves', setter='set_inventory_moves')
-    moves = fields.One2Many('stock.move', 'shipment', 'Moves',
-        domain=[('company', '=', Eval('company'))], readonly=True)
+    moves = fields.One2Many(
+        'stock.move', 'shipment', "Moves",
+        domain=[('company', '=', Eval('company'))],
+        states={
+            'readonly': True,
+            })
     origins = fields.Function(fields.Char('Origins'), 'get_origins')
     received_by = employee_field("Received By")
     done_by = employee_field("Done By")
@@ -600,18 +621,8 @@ class ShipmentIn(
 
     @classmethod
     def create(cls, vlist):
-        pool = Pool()
-        Config = pool.get('stock.configuration')
-
-        vlist = [x.copy() for x in vlist]
-        config = Config(1)
-        default_company = cls.default_company()
-        for values in vlist:
-            if values.get('number') is None:
-                values['number'] = config.get_multivalue(
-                    'shipment_in_sequence',
-                    company=values.get('company', default_company)).get()
         shipments = super(ShipmentIn, cls).create(vlist)
+        cls.set_number(shipments)
         cls._set_move_planned_date(shipments)
         return shipments
 
@@ -957,17 +968,6 @@ class ShipmentInReturn(ShipmentAssignMixin, Workflow, ModelSQL, ModelView):
 
     @classmethod
     def create(cls, vlist):
-        pool = Pool()
-        Config = pool.get('stock.configuration')
-
-        vlist = [x.copy() for x in vlist]
-        config = Config(1)
-        default_company = cls.default_company()
-        for values in vlist:
-            if values.get('number') is None:
-                values['number'] = config.get_multivalue(
-                    'shipment_in_return_sequence',
-                    company=values.get('company', default_company)).get()
         shipments = super(ShipmentInReturn, cls).create(vlist)
         cls._set_move_planned_date(shipments)
         return shipments
@@ -1028,6 +1028,7 @@ class ShipmentInReturn(ShipmentAssignMixin, Workflow, ModelSQL, ModelView):
         else:
             assert all(m.shipment in shipments for m in moves)
         Move.draft(moves)
+        cls.set_number(shipments)
         cls._set_move_planned_date(shipments)
 
     @classmethod
@@ -1245,8 +1246,12 @@ class ShipmentOut(
                 },
             help="The moves that pick the stock from the storage area."),
         'get_inventory_moves', setter='set_inventory_moves')
-    moves = fields.One2Many('stock.move', 'shipment', 'Moves',
-        domain=[('company', '=', Eval('company'))], readonly=True)
+    moves = fields.One2Many(
+        'stock.move', 'shipment', "Moves",
+        domain=[('company', '=', Eval('company'))],
+        states={
+            'readonly': True,
+            })
     origins = fields.Function(fields.Char('Origins'), 'get_origins')
     picked_by = employee_field("Picked By")
     packed_by = employee_field("Packed By")
@@ -1500,6 +1505,7 @@ class ShipmentOut(
                     to_create.append(inventory_move)
         if to_create:
             Move.save(to_create)
+        cls.set_number(shipments)
 
     def _get_inventory_move(self, move):
         'Return inventory move for the outgoing move if necessary'
@@ -1734,17 +1740,6 @@ class ShipmentOut(
 
     @classmethod
     def create(cls, vlist):
-        pool = Pool()
-        Config = pool.get('stock.configuration')
-
-        vlist = [x.copy() for x in vlist]
-        config = Config(1)
-        default_company = cls.default_company()
-        for values in vlist:
-            if values.get('number') is None:
-                values['number'] = config.get_multivalue(
-                    'shipment_out_sequence',
-                    company=values.get('company', default_company)).get()
         shipments = super(ShipmentOut, cls).create(vlist)
         cls._set_move_planned_date(shipments)
         return shipments
@@ -1943,8 +1938,12 @@ class ShipmentOutReturn(
                 },
             help="The moves that put the stock away into the storage area."),
         'get_inventory_moves', setter='set_inventory_moves')
-    moves = fields.One2Many('stock.move', 'shipment', 'Moves',
-        domain=[('company', '=', Eval('company'))], readonly=True)
+    moves = fields.One2Many(
+        'stock.move', 'shipment', "Moves",
+        domain=[('company', '=', Eval('company'))],
+        states={
+            'readonly': True,
+            })
     origins = fields.Function(fields.Char('Origins'), 'get_origins')
     received_by = employee_field("Received By")
     done_by = employee_field("Done By")
@@ -2128,18 +2127,8 @@ class ShipmentOutReturn(
 
     @classmethod
     def create(cls, vlist):
-        pool = Pool()
-        Config = pool.get('stock.configuration')
-
-        vlist = [x.copy() for x in vlist]
-        config = Config(1)
-        default_company = cls.default_company()
-        for values in vlist:
-            if values.get('number') is None:
-                values['number'] = config.get_multivalue(
-                    'shipment_out_return_sequence',
-                    company=values.get('company', default_company)).get()
         shipments = super(ShipmentOutReturn, cls).create(vlist)
+        cls.set_number(shipments)
         cls._set_move_planned_date(shipments)
         return shipments
 
@@ -2612,17 +2601,6 @@ class ShipmentInternal(
 
     @classmethod
     def create(cls, vlist):
-        pool = Pool()
-        Config = pool.get('stock.configuration')
-
-        vlist = [x.copy() for x in vlist]
-        config = Config(1)
-        default_company = cls.default_company()
-        for values in vlist:
-            if values.get('number') is None:
-                values['number'] = config.get_multivalue(
-                    'shipment_internal_sequence',
-                    company=values.get('company', default_company)).get()
         shipments = super().create(vlist)
         cls._set_move_planned_date(shipments)
         return shipments
@@ -2829,6 +2807,7 @@ class ShipmentInternal(
                     moves.append(move)
         Move.save(moves)
 
+        cls.set_number(shipments)
         cls._set_transit(shipments)
         cls._sync_moves(shipments)
 

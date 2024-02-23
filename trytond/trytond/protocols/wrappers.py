@@ -24,7 +24,7 @@ from trytond.config import config
 from trytond.exceptions import RateLimitException, UserError, UserWarning
 from trytond.pool import Pool
 from trytond.tools import cached_property
-from trytond.transaction import Transaction, check_access
+from trytond.transaction import Transaction, TransactionError, check_access
 
 __all__ = [
     'HTTPStatus',
@@ -193,23 +193,36 @@ def with_pool(func):
         if database_name not in database_list:
             with Transaction().start(database_name, 0, readonly=True):
                 pool.init()
+
+        log_message = '%s in %i ms'
+
+        def duration():
+            return (time.monotonic() - started) * 1000
+        started = time.monotonic()
+
         try:
-            return func(request, pool, *args, **kwargs)
+            result = func(request, pool, *args, **kwargs)
         except exceptions.HTTPException:
-            logger.debug('%s', request, exc_info=True)
+            logger.info(
+                log_message, request, duration(),
+                exc_info=logger.isEnabledFor(logging.DEBUG))
             raise
         except (UserError, UserWarning) as e:
-            logger.debug('%s', request, exc_info=True)
+            logger.info(
+                log_message, request, duration(),
+                exc_info=logger.isEnabledFor(logging.DEBUG))
             if request.rpc_method:
                 raise
             else:
                 abort(HTTPStatus.BAD_REQUEST, e)
         except Exception as e:
-            logger.error('%s', request, exc_info=True)
+            logger.exception(log_message, request, duration())
             if request.rpc_method:
                 raise
             else:
                 abort(HTTPStatus.INTERNAL_SERVER_ERROR, e)
+        logger.info(log_message, request, duration())
+        return result
     return wrapper
 
 
@@ -235,17 +248,27 @@ def with_transaction(readonly=None, user=0, context=None):
             else:
                 user_ = user
             retry = config.getint('database', 'retry')
-            for count in range(retry, -1, -1):
-                if count != retry:
+            count = 0
+            transaction_extras = {}
+            while True:
+                if count:
                     time.sleep(0.02 * (retry - count))
                 with Transaction().start(
                         pool.database_name, user_, readonly=readonly_,
-                        context=context_) as transaction:
+                        context=context_, **transaction_extras) as transaction:
                     try:
                         result = func(request, pool, *args, **kwargs)
+                    except TransactionError as e:
+                        transaction.rollback()
+                        transaction.tasks.clear()
+                        e.fix(transaction_extras)
+                        continue
                     except backend.DatabaseOperationalError:
-                        if count and not readonly_:
+                        if count < retry and not readonly_:
                             transaction.rollback()
+                            transaction.tasks.clear()
+                            count += 1
+                            logger.debug("Retry: %i", count)
                             continue
                         raise
                     # Need to commit to unlock SQLite database

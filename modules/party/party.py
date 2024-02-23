@@ -10,6 +10,7 @@ from sql.functions import CharLength
 from stdnum import get_cc_module
 from stdnum.eu.vat import MEMBER_STATES as EU_MEMBER_STATES
 
+from trytond import backend
 from trytond.i18n import gettext
 from trytond.model import (
     DeactivableMixin, Index, ModelSQL, ModelView, MultiValueMixin, Unique,
@@ -432,11 +433,16 @@ class PartyLang(ModelSQL, ValueMixin):
 class PartyCategory(ModelSQL):
     'Party - Category'
     __name__ = 'party.party-party.category'
-    _table = 'party_category_rel'
     party = fields.Many2One(
         'party.party', "Party", ondelete='CASCADE', required=True)
     category = fields.Many2One(
         'party.category', "Category", ondelete='CASCADE', required=True)
+
+    @classmethod
+    def __register__(cls, module):
+        # Migration from 7.0: rename to standard name
+        backend.TableHandler.table_rename('party_category_rel', cls._table)
+        super().__register__(module)
 
 
 IDENTIFIER_VAT = [
@@ -921,18 +927,22 @@ class CheckVIES(Wizard):
                     else:
                         parties_succeed.append(party.id)
                 except Exception as e:
-                    if hasattr(e, 'faultstring') \
-                            and hasattr(e.faultstring, 'find'):
-                        if e.faultstring.find('INVALID_INPUT'):
+                    for msg in e.args:
+                        if msg == 'INVALID_INPUT':
                             parties_failed.append(party.id)
-                            continue
-                        if e.faultstring.find('SERVICE_UNAVAILABLE') \
-                                or e.faultstring.find('MS_UNAVAILABLE') \
-                                or e.faultstring.find('TIMEOUT') \
-                                or e.faultstring.find('SERVER_BUSY'):
+                            break
+                        elif msg in {
+                                'SERVICE_UNAVAILABLE',
+                                'MS_UNAVAILABLE',
+                                'MS_MAX_CONCURRENT_REQ',
+                                'GLOBAL_MS_MAX_CONCURRENT_REQ',
+                                'TIMEOUT',
+                                'SERVER_BUSY',
+                                }:
                             raise VIESUnavailable(
                                 gettext('party.msg_vies_unavailable')) from e
-                    raise
+                    else:
+                        raise
         self.result.parties_succeed = parties_succeed
         self.result.parties_failed = parties_failed
         return 'result'
@@ -1083,7 +1093,8 @@ class Erase(Wizard):
     def transition_erase(self):
         pool = Pool()
         Party = pool.get('party.party')
-        cursor = Transaction().connection.cursor()
+        transaction = Transaction()
+        cursor = transaction.connection.cursor()
 
         resources = self.get_resources()
         parties = replacing = [self.ask.party]
@@ -1136,6 +1147,7 @@ class Erase(Wizard):
                                         Model.__name__ + ',%')
                                     & resource_field.sql_id(
                                         table.resource, Model).in_(query)))
+        transaction.counter += 1
         return 'end'
 
     def check_erase(self, party):

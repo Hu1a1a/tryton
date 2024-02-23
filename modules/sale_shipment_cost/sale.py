@@ -80,7 +80,7 @@ class Sale(metaclass=PoolMeta):
             ('shipment', "On Shipment"),
             ], "Shipment Cost Method",
         domain=[
-            If(~Eval('carrier') & (Eval('state') != 'draft'),
+            If(~Eval('carrier') & ~Eval('state').in_(['draft', 'cancelled']),
                 ('shipment_cost_method', '=', None),
                 ()),
             ],
@@ -371,9 +371,9 @@ class Sale(metaclass=PoolMeta):
         pool = Pool()
         ShipmentOut = pool.get('stock.shipment.out')
         fields = super()._get_shipment_grouping_fields(shipment)
-        fields.append('carrier')
+        fields.add('carrier')
         if isinstance(shipment, ShipmentOut):
-            fields.append('cost_method')
+            fields.add('cost_method')
         return fields
 
     @property

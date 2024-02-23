@@ -7,7 +7,7 @@ from copy import deepcopy
 from decimal import Decimal
 
 from simpleeval import InvalidExpression, simple_eval
-from sql import Literal, Select, Window, With
+from sql import Literal, Null, Select, Window, With
 from sql.aggregate import Max, Sum
 from sql.conditionals import Case, Coalesce
 from sql.functions import CurrentTimestamp
@@ -19,7 +19,7 @@ from trytond.model.exceptions import AccessError
 from trytond.modules.product import price_digits, round_price
 from trytond.pool import Pool, PoolMeta
 from trytond.pyson import Bool, Eval, If, PYSONEncoder
-from trytond.tools import decistmt, grouped_slice
+from trytond.tools import decistmt, grouped_slice, reduce_ids
 from trytond.tools import timezone as tz
 from trytond.transaction import Transaction, without_check_access
 from trytond.wizard import (
@@ -82,7 +82,8 @@ def check_no_move(func):
 
 def check_no_stock_if_inactive(func):
 
-    def get_product_locations(company, location_ids, sub_products):
+    def get_product_locations(
+            company, location_ids, sub_products, grouping=('product',)):
         pool = Pool()
         Product = pool.get('product.product')
 
@@ -91,21 +92,20 @@ def check_no_stock_if_inactive(func):
         with Transaction().set_context(company=company.id):
             quantities = Product.products_by_location(
                 location_ids, with_childs=True,
-                grouping=('product',), grouping_filter=(product_ids,))
+                grouping=grouping, grouping_filter=(product_ids,))
         for key, quantity in quantities.items():
             location_id, product_id, = key
             if quantity:
                 product2locations[product_id].append(location_id)
         return product2locations
 
-    def raise_warning(company, product2locations):
+    def raise_warning(cls, company, product2locations):
         pool = Pool()
         Location = pool.get('stock.location')
         Warning = pool.get('res.user.warning')
-        Product = pool.get('product.product')
 
         for product_id, location_ids in product2locations.items():
-            product = Product(product_id)
+            product = cls(product_id)
             locations = ','.join(
                 l.rec_name for l in Location.browse(location_ids[:5]))
             if len(location_ids) > 5:
@@ -127,6 +127,11 @@ def check_no_stock_if_inactive(func):
         Company = pool.get('company.company')
         Location = pool.get('stock.location')
 
+        if cls.__name__ == 'product.template':
+            grouping = ('product.template',)
+        else:
+            grouping = ('product',)
+
         to_check = []
         actions = iter(args)
         for products, values in zip(actions, actions):
@@ -139,8 +144,8 @@ def check_no_stock_if_inactive(func):
                 for company in Company.search([]):
                     for sub_products in grouped_slice(to_check):
                         product2locations = get_product_locations(
-                            company, location_ids, sub_products)
-                        raise_warning(company, product2locations)
+                            company, location_ids, sub_products, grouping)
+                        raise_warning(cls, company, product2locations)
         return func(cls, *args)
     return decorator
 
@@ -182,6 +187,7 @@ class Template(metaclass=PoolMeta):
 
     @classmethod
     @check_no_move
+    @check_no_stock_if_inactive
     def write(cls, *args):
         super(Template, cls).write(*args)
 
@@ -641,7 +647,8 @@ class ProductQuantitiesByWarehouse(ModelSQL, ModelView):
         Product = pool.get('product.product')
         Date = pool.get('ir.date')
         move = from_ = Move.__table__()
-        context = Transaction().context
+        transaction = Transaction()
+        context = transaction.context
         today = Date.today()
 
         if context.get('product_template') is not None:
@@ -650,7 +657,14 @@ class ProductQuantitiesByWarehouse(ModelSQL, ModelView):
                 product_template = [product_template]
             product = Product.__table__()
             from_ = move.join(product, condition=move.product == product.id)
-            product_clause = product.template.in_(product_template or [-1])
+            if product_template:
+                if len(product_template) > transaction.database.IN_MAX:
+                    raise AccessError(gettext(
+                            'stock.msg_product_quantities_max',
+                            max=transaction.database.IN_MAX))
+                product_clause = reduce_ids(product.template, product_template)
+            else:
+                product_clause = product.template == Null
             product_column = Concat('product.template,', product.template)
             products = [('product.template', i) for i in product_template]
         else:
@@ -659,7 +673,14 @@ class ProductQuantitiesByWarehouse(ModelSQL, ModelView):
                 product = []
             if isinstance(product, int):
                 product = [product]
-            product_clause = move.product.in_(product or [-1])
+            if product:
+                if len(product) > transaction.database.IN_MAX:
+                    raise AccessError(gettext(
+                            'stock.msg_product_quantities_max',
+                            max=transaction.database.IN_MAX))
+                product_clause = reduce_ids(move.product, product)
+            else:
+                product_clause = move.product == Null
             product_column = Concat('product.product,', move.product)
             products = [('product.product', i) for i in product]
 
@@ -909,7 +930,14 @@ class ProductQuantitiesByWarehouseMove(ModelSQL, ModelView):
                 product_template = [product_template]
             product = Product.__table__()
             from_ = move.join(product, condition=move.product == product.id)
-            product_clause = product.template.in_(product_template or [-1])
+            if product_template:
+                if len(product_template) > transaction.database.IN_MAX:
+                    raise AccessError(gettext(
+                            'stock.msg_product_quantities_max',
+                            max=transaction.database.IN_MAX))
+                product_clause = reduce_ids(product.template, product_template)
+            else:
+                product_clause = product.template == Null
             product_column = Concat('product.template,', product.template)
         else:
             product = context.get('product', -1)
@@ -917,7 +945,14 @@ class ProductQuantitiesByWarehouseMove(ModelSQL, ModelView):
                 product = -1
             if isinstance(product, int):
                 product = [product]
-            product_clause = move.product.in_(product or [-1])
+            if product:
+                if len(product) > transaction.database.IN_MAX:
+                    raise AccessError(gettext(
+                            'stock.msg_product_quantities_max',
+                            max=transaction.database.IN_MAX))
+                product_clause = reduce_ids(move.product, product)
+            else:
+                product_clause = move.product == Null
             product_column = Concat('product.product,', move.product)
 
         if 'warehouse' in context:

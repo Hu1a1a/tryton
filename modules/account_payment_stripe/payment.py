@@ -5,7 +5,6 @@ import logging
 import urllib.parse
 import uuid
 from decimal import Decimal
-from email.header import Header
 from itertools import groupby
 from operator import attrgetter
 
@@ -391,7 +390,7 @@ class Payment(StripeCustomerMethodMixin, CheckoutMixin, metaclass=PoolMeta):
             'account.payment.stripe.email_checkout', self, languages)
         set_from_header(msg, from_cfg, from_ or from_cfg)
         msg['To'] = ','.join(emails)
-        msg['Subject'] = Header(title, 'utf-8')
+        msg['Subject'] = title
         sendmail_transactional(from_cfg, emails, msg)
 
     def _emails_checkout(self):
@@ -1641,8 +1640,7 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
                 payment_methods = stripe.PaymentMethod.list(
                     api_key=self.stripe_account.secret_key,
                     stripe_version=STRIPE_VERSION,
-                    customer=self.stripe_customer_id,
-                    type='card')
+                    customer=self.stripe_customer_id)
             except (stripe.error.RateLimitError,
                     stripe.error.APIConnectionError) as e:
                 logger.warning(str(e))
@@ -1662,6 +1660,8 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
                 name += ' ****' + card.last4
             if card.exp_month and card.exp_year:
                 name += ' %s/%s' % (card.exp_month, card.exp_year)
+        elif payment_method.type == 'sepa_debit':
+            name = '****' + payment_method.sepa_debit.last4
         return name
 
     @property
