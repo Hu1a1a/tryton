@@ -461,10 +461,12 @@
             id: tab.id
         }).append(tab.el)
         .appendTo(tabcontent);
-        tab_link.on('click',function(evt){
-            console.log(evt);
+        tab_link.on('mousedown', function(evt) {
+            if ( evt.which === 2 ) {
+            evt.preventDefault();    
+            tab.close();
+            }
         });
-        console.log(tab_link);
         tab_link.on('hide.bs.tab', function(evt) {
             jQuery(evt.target).data('scrollTop', tabs.scrollTop());
         });
