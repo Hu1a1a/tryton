@@ -20,3 +20,11 @@ elasticsearch
 phonenumbers
 pyactiveresource
 ShopifyAPI
+python-dateutil
+sql
+python-sql
+werkzeug
+defusedxml
+genshi
+relatorio
+passlib
