@@ -248,7 +248,7 @@
                     }));
                 this.buttons[item.id] = button;
                 if (item.dropdown) {
-                    var dropdown = jQuery('<div/>', {
+                    jQuery('<div/>', {
                         'class': 'btn-group dropdown',
                         'role': 'group',
                     }).append(button.append(jQuery('<span/>', {
@@ -514,7 +514,8 @@
                 name = Sao.common.MODELNAME.get(model_name);
             }
             if (attributes.res_id) {
-                if (attributes.hasOwnProperty('tab_domain')) {
+                if (Object.prototype.hasOwnProperty.call(
+                    attributes, 'tab_domain')) {
                     delete attributes.tab_domain;
                 }
             }
@@ -626,7 +627,7 @@
                         }));
                     }
                     buttons.forEach(function(button) {
-                        var item = jQuery('<li/>', {
+                        jQuery('<li/>', {
                             'role': 'presentation',
                             'class': menu_action[0] + '_button'
                         })
@@ -697,7 +698,7 @@
                 });
 
                 toolbars[menu_action[0]].forEach(action => {
-                    var item = jQuery('<li/>', {
+                    jQuery('<li/>', {
                         'role': 'presentation'
                     })
                         .append(jQuery('<a/>', {
@@ -755,7 +756,7 @@
                         }));
                     }
                     toolbars.exports.forEach(export_ => {
-                        var item = jQuery('<li/>', {
+                        jQuery('<li/>', {
                             'role': 'presentation',
                         })
                             .append(jQuery('<a/>', {
@@ -1618,7 +1619,7 @@
     Sao.Tab.Board = Sao.class_(Sao.Tab, {
         class_: 'tab-board',
         init: function(attributes) {
-            var UIView, view_prm;
+            var UIView;
             Sao.Tab.Board._super.init.call(this, attributes);
             this.model = attributes.model;
             this.view_id = (attributes.view_ids.length > 0 ?
@@ -1634,7 +1635,6 @@
             this.view_prm = UIView.execute(
                 'view_get', [this.view_id], this.context);
             this.view_prm.done(view => {
-                var board;
                 view = jQuery(jQuery.parseXML(view.arch));
                 this.board = new Sao.View.Board(view, this.context);
                 this.board.actions_prms.done(() => {
@@ -1665,12 +1665,7 @@
             this.board.reload();
         },
         record_message: function() {
-            var i, len;
-            var action;
-
-            len = this.board.actions.length;
-            for (i = 0, len=len; i < len; i++) {
-                action = this.board.actions[i];
+            for (const action of this.board.actions) {
                 action.update_domain(this.board.actions);
             }
         },
