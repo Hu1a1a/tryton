@@ -52,3 +52,11 @@ trytond/trytond.conf
 sao/custom.css
 sao/custom.js
 ```
+
+## tryton client:
+
+```
+Run mysys64
+For the developing use python bin/tryton
+For the build use make-win32-installler.sh and will get tryton.exe at the same folder
+```
