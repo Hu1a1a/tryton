@@ -3,6 +3,39 @@
 (function() {
     'use strict';
 
+    function get_x2m_sub_fields(f_attrs, prefix) {
+        if (f_attrs.loading == 'eager' && f_attrs.views) {
+            // There's only one key but we don't know its value
+            const [[, view],] = Object.entries(f_attrs.views);
+
+            const sub_fields = view.fields || {};
+            const x2m_sub_fields = [];
+
+            for (const [s_field, f_def] of Object.entries(sub_fields)) {
+                x2m_sub_fields.push(`${prefix}.${s_field}`);
+
+                var type_ = f_def.type;
+                if (['many2one', 'one2one', 'reference'].includes(type_)) {
+                    x2m_sub_fields.push(`${prefix}.${s_field}.rec_name`);
+                } else if (['selection', 'multiselection'].includes(type_)) {
+                    x2m_sub_fields.push(`${prefix}.${s_field}:string`);
+                } else if (['one2many', 'many2many'].includes(type_)) {
+                    x2m_sub_fields.push(
+                        ...get_x2m_sub_fields(f_def, `${prefix}.${s_field}`)
+                    );
+                }
+            }
+
+            x2m_sub_fields.push(
+                `${prefix}._timestamp`,
+                `${prefix}._write`,
+                `${prefix}._delete`);
+            return x2m_sub_fields;
+        } else {
+            return [];
+        }
+    }
+
     Sao.Model = Sao.class_(Object, {
         init: function(name, attributes) {
             attributes = attributes || {};
@@ -78,7 +111,7 @@
                 this.__readonly = value;
             }
         });
-        array.load = function(ids, modified=false, position=-1) {
+        array.load = function(ids, modified=false, position=-1, preloaded=null) {
             if (position == -1) {
                 position = this.length;
             }
@@ -90,6 +123,9 @@
                     new_record.group = this;
                     this.splice(position, 0, new_record);
                     position += 1;
+                }
+                if (preloaded && (id in preloaded)) {
+                    new_record.set(preloaded[id], false, false);
                 }
                 new_records.push(new_record);
             }
@@ -173,7 +209,6 @@
         };
         array.remove = function(
             record, remove, force_remove=false, modified=true) {
-            var idx = this.indexOf(record);
             if (record.id >= 0) {
                 if (remove) {
                     if (~this.record_deleted.indexOf(record)) {
@@ -404,8 +439,8 @@
             }
             jQuery.extend(context, this._context);
             if (this.parent_datetime_field) {
-                context._datetime = this.parent.get_eval()
-                [this.parent_datetime_field];
+                context._datetime = this.parent.get_eval()[
+                    this.parent_datetime_field];
             }
             return context;
         };
@@ -417,6 +452,7 @@
             var head = domain[0];
             var tail = domain.slice(1);
             if (~['AND', 'OR'].indexOf(head)) {
+                // pass
             } else if (inversion.is_leaf(head)) {
                 var field = head[0];
                 if ((field in this.model.fields) &&
@@ -468,7 +504,7 @@
         array.set_sequence = function(field, position) {
             var changed = false;
             var prev = null;
-            var record, index, update, value, cmp;
+            var index, update, value, cmp;
             if (position === 0) {
                 cmp = function(a, b) { return a > b; };
             } else {
@@ -613,7 +649,6 @@
         },
         load: function(name, async=true, process_exception=true) {
             var fname;
-            var prm;
             if (this.destroyed || this.is_loaded(name)) {
                 if (async) {
                     return jQuery.when();
@@ -667,6 +702,7 @@
                     fnames.push(fname);
                 }
             }
+            var related_read_limit = null;
             var fnames_to_fetch = fnames.slice();
             var rec_named_fields = ['many2one', 'one2one', 'reference'];
             const selection_fields = ['selection', 'multiselection'];
@@ -677,6 +713,13 @@
                 else if (~selection_fields.indexOf(fdescription.type) &&
                     ((fdescription.loading || 'lazy') == 'eager')) {
                     fnames_to_fetch.push(fname + ':string');
+                } else if (
+                    ['many2many', 'one2many'].includes(fdescription.type)) {
+                    var sub_fields = get_x2m_sub_fields(fdescription, fname);
+                    fnames_to_fetch = [ ...fnames_to_fetch, ...sub_fields];
+                    if (sub_fields.length > 0) {
+                        related_read_limit = Sao.config.display_size;
+                    }
                 }
             }
             if (!~fnames.indexOf('rec_name')) {
@@ -687,6 +730,9 @@
             fnames_to_fetch.push('_delete');
 
             var context = jQuery.extend({}, this.get_context());
+            if (related_read_limit) {
+                context.related_read_limit = related_read_limit;
+            }
             if (loading == 'eager') {
                 var limit = Math.trunc(Sao.config.limit /
                     Math.min(fnames_to_fetch.length, 10));
@@ -741,9 +787,6 @@
             }
 
             for (fname in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(fname)) {
-                    continue;
-                }
                 if ((this.model.fields[fname].description.type == 'binary') &&
                         ~fnames_to_fetch.indexOf(fname, fnames_to_fetch)) {
                     context[this.model.name + '.' + fname] = 'size';
@@ -758,9 +801,6 @@
                     id2value[e.id] = e;
                 }
                 for (var id in id2record) {
-                    if (!id2record.hasOwnProperty(id)) {
-                        continue;
-                    }
                     var record = id2record[id];
                     if (!record.exception) {
                         record.exception = exception;
@@ -768,9 +808,6 @@
                     var value = id2value[id];
                     if (record && value) {
                         for (var key in this.modified_fields) {
-                            if (!this.modified_fields.hasOwnProperty(key)) {
-                                continue;
-                            }
                             delete value[key];
                         }
                         record.set(value, false);
@@ -809,13 +846,9 @@
         },
         set: function(values, modified=true, validate=true) {
             var name, value;
-            var rec_named_fields = ['many2one', 'one2one', 'reference'];
             var later = {};
             var fieldnames = [];
             for (name in values) {
-                if (!values.hasOwnProperty(name)) {
-                    continue;
-                }
                 value = values[name];
                 if (name == '_timestamp') {
                     // Always keep the older timestamp
@@ -859,7 +892,7 @@
             }
             for (name in later) {
                 value = later[name];
-                this.model.fields[name].set(this, value);
+                this.model.fields[name].set(this, value, false, values[`${name}.`]);
                 this._loaded[name] = true;
                 fieldnames.push(name);
             }
@@ -873,9 +906,6 @@
         get: function() {
             var value = {};
             for (var name in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(name)) {
-                    continue;
-                }
                 var field = this.model.fields[name];
                 if (field.description.readonly &&
                         !((field instanceof Sao.field.One2Many) &&
@@ -964,9 +994,6 @@
                     this[fname] = values[fname];
                     continue;
                 }
-                if (!values.hasOwnProperty(fname)) {
-                    continue;
-                }
                 var value = values[fname];
                 if (!(fname in this.model.fields)) {
                     continue;
@@ -1006,9 +1033,6 @@
             var timestamps = {};
             timestamps[this.model.name + ',' + this.id] = this._timestamp;
             for (var fname in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(fname)) {
-                    continue;
-                }
                 if (!(fname in this._loaded)) {
                     continue;
                 }
@@ -1020,7 +1044,7 @@
         get_eval: function() {
             var value = {};
             for (var key in this.model.fields) {
-                if (!this._loaded.hasOwnProperty(key) && this.id >= 0)
+                if (!(key in this._loaded) && this.id >= 0)
                     continue;
                 value[key] = this.model.fields[key].get_eval(this);
             }
@@ -1104,9 +1128,6 @@
             var later = {};
             var fieldname, on_change_with;
             for (fieldname in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(fieldname)) {
-                    continue;
-                }
                 on_change_with = this.model.fields[fieldname]
                     .description.on_change_with;
                 if (jQuery.isEmptyObject(on_change_with)) {
@@ -1289,9 +1310,6 @@
                     if (sync && this.id >= 0 && !(fname in this._loaded)) {
                         continue;
                     }
-                    if (!this.model.fields.hasOwnProperty(fname)) {
-                        continue;
-                    }
                     var field = this.model.fields[fname];
                     if (fields && !~fields.indexOf(fname)) {
                         continue;
@@ -1445,9 +1463,6 @@
         },
         set_field_context: function() {
             for (var name in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(name)) {
-                    continue;
-                }
                 var field = this.model.fields[name];
                 var value = this._values[name];
                 if (!(value instanceof Array)) {
@@ -1503,7 +1518,8 @@
         destroy: function() {
             var vals = Object.values(this._values);
             for (const val of vals) {
-                if (val && val.hasOwnProperty('destroy')) {
+                if (val &&
+                    Object.prototype.hasOwnProperty.call(val, 'destroy')) {
                     val.destroy();
                 }
             }
@@ -1731,8 +1747,7 @@
             } else if (Sao.common.compare(domain, [['id', '=', null]])) {
                 invalid = 'domain';
             } else {
-                let [screen_domain, _] = this.get_domains(
-                    record, pre_validate);
+                let [screen_domain] = this.get_domains(record, pre_validate);
                 var uniques = inversion.unique_value(
                     domain, this._single_value);
                 var unique = uniques[0];
@@ -2215,10 +2230,9 @@
         },
         _default: null,
         _single_value: false,
-        _set_value: function(record, value, default_, modified) {
+        _set_value: function(record, value, default_, modified, data) {
             this._set_default_value(record);
             var group = record._values[this.name];
-            var prm = jQuery.when();
             if (jQuery.isEmptyObject(value)) {
                 value = [];
             }
@@ -2229,29 +2243,64 @@
             } else {
                 mode = 'list values';
             }
-            if (mode == 'list values') {
+            if ((mode == 'list values') || data) {
                 var context = this.get_context(record);
-                let field_names = new Set();
-                for (const val of value) {
-                    for (const fieldname in val) {
-                        if (!(fieldname in group.model.fields) &&
-                                (!~fieldname.indexOf('.'))) {
-                            field_names.add(fieldname);
+                var value_fields = new Set();
+                if (mode == 'list values') {
+                    for (const v of value) {
+                        for (const f of Object.keys(v)) {
+                            value_fields.add(f);
+                        }
+                    }
+                } else {
+                    for (const d of data) {
+                        for (const f in d) {
+                            value_fields.add(f);
                         }
                     }
                 }
-                if (field_names.size) {
+                let field_names = new Set();
+                for (const fieldname of value_fields) {
+                    if (!(fieldname in group.model.fields) &&
+                            (!~fieldname.indexOf('.')) &&
+                            (!~fieldname.indexOf(':')) &&
+                            (!fieldname.startsWith('_'))) {
+                        field_names.add(fieldname);
+                    }
+                }
+                var attr_fields = Object.values(this.description.views || {})
+                    .map(v => v.fields)
+                    .reduce((acc, elem) => {
+                        for (const field in elem) {
+                            acc[field] = elem[field];
+                        }
+                        return acc;
+                    }, {});
+                var fields = {};
+                for (const n of field_names) {
+                    if (n in attr_fields) {
+                        fields[n] = attr_fields[n];
+                    }
+                }
+
+                var to_fetch = Array.from(field_names).filter(k => !(k in attr_fields));
+                if (to_fetch.length) {
                     var args = {
                         'method': 'model.' + this.description.relation +
                             '.fields_get',
-                        'params': [Array.from(field_names), context]
+                        'params': [to_fetch, context]
                     };
-                    var fields;
                     try {
-                        fields = Sao.rpc(args, record.model.session, false);
+                        var rpc_fields = Sao.rpc(
+                            args, record.model.session, false);
+                        for (const [key, value] of Object.entries(rpc_fields)) {
+                            fields[key] = value;
+                        }
                     } catch (e) {
                         return;
                     }
+                }
+                if (!jQuery.isEmptyObject(fields)) {
                     group.add_fields(fields);
                 }
             }
@@ -2265,7 +2314,11 @@
                 for (const record_to_remove of records_to_remove) {
                     group.remove(record_to_remove, true, false, false);
                 }
-                group.load(value, modified || default_);
+                var preloaded = {};
+                for (const d of (data || [])) {
+                    preloaded[d.id] = d;
+                }
+                group.load(value, modified || default_, -1, preloaded);
             } else {
                 for (const vals of value) {
                     var new_record;
@@ -2290,7 +2343,7 @@
                 group.record_modified();
             }
         },
-        set: function(record, value, _default=false) {
+        set: function(record, value, _default=false, data=null) {
             var group = record._values[this.name];
             var model;
             if (group !== undefined) {
@@ -2303,7 +2356,7 @@
             }
             record._values[this.name] = undefined;
             this._set_default_value(record, model);
-            this._set_value(record, value, _default);
+            this._set_value(record, value, _default, undefined, data);
         },
         get: function(record) {
             var group = record._values[this.name];
@@ -2877,7 +2930,6 @@
             return '%X';
         },
         add_keys: function(keys, record) {
-            var schema_model = this.description.schema_model;
             var context = this.get_context(record);
             var domain = this.get_domain(record);
             var batchlen = Math.min(10, Sao.config.limit);

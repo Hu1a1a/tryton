@@ -1,7 +1,9 @@
 # This file is part of Tryton.  The COPYRIGHT file at the top level of
 # this repository contains the full copyright notices and license terms.
 
+import base64
 import colorsys
+import concurrent.futures
 import gettext
 import locale
 import logging
@@ -11,7 +13,7 @@ import re
 import subprocess
 import unicodedata
 import xml.etree.ElementTree as ET
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import PurePath
@@ -30,11 +32,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from functools import lru_cache, wraps
+from functools import wraps
 from string import Template
 from threading import Lock, Thread
 
 import tryton.rpc as rpc
+from tryton.cache import CacheDict
 from tryton.config import CONFIG, PIXMAPS_DIR, SOUNDS_DIR, TRYTON_ICON
 
 try:
@@ -60,11 +63,15 @@ logger = logging.getLogger(__name__)
 class IconFactory:
 
     batchnum = 10
-    _tryton_icons = []
-    _name2id = {}
+    _name2id = OrderedDict()
     _icons = {}
     _local_icons = {}
     _pixbufs = defaultdict(dict)
+    _url_pixbufs = CacheDict(cache_len=CONFIG['image.cache_size'])
+    _empty_pixbufs = {}
+    _empty_gif = base64.b64decode(
+        'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @classmethod
     def load_local_icons(cls):
@@ -75,69 +82,61 @@ class IconFactory:
 
     @classmethod
     def load_icons(cls, refresh=False):
-        if not refresh:
-            cls._name2id.clear()
-            cls._icons.clear()
-        del cls._tryton_icons[:]
-
         try:
             icons = rpc.execute('model', 'ir.ui.icon', 'list_icons',
                 rpc.CONTEXT)
         except TrytonServerError:
             icons = []
-        for icon_id, icon_name in icons:
-            if refresh and icon_name in cls._icons:
-                continue
-            cls._tryton_icons.append((icon_id, icon_name))
-            cls._name2id[icon_name] = icon_id
+        cls._name2id = name2id = OrderedDict((n, i) for i, n in icons)
+        if not refresh:
+            cls._icons.clear()
+        return name2id
 
     @classmethod
-    def register_icon(cls, iconname):
-        # iconname might be '' when page do not define icon
-        if (not iconname
-                or iconname in cls._icons
-                or iconname in cls._local_icons):
-            return
-        if iconname not in cls._name2id:
-            cls.load_icons(refresh=True)
-        try:
-            icon_ref = (cls._name2id[iconname], iconname)
-        except KeyError:
-            logger.error(f"Unknown icon {iconname}")
-            cls._icons[iconname] = None
-            return
-        idx = cls._tryton_icons.index(icon_ref)
-        to_load = slice(max(0, idx - cls.batchnum // 2),
+    def _get_icon(cls, iconname):
+        data = cls._icons.get(iconname)
+        if data is not None:
+            return data
+        path = cls._local_icons.get(iconname)
+        if path is not None:
+            with open(path, 'rb') as fp:
+                return fp.read()
+
+        name2id = cls._name2id
+        if iconname not in name2id:
+            name2id = cls.load_icons(refresh=True)
+            if iconname not in name2id:
+                logger.error(f"Unknown icon {iconname}")
+                cls._icons[iconname] = None
+                return
+        names = [n for n in name2id if n not in cls._icons or n == iconname]
+        idx = names.index(iconname)
+        to_load = slice(
+            max(0, idx - cls.batchnum // 2),
             idx + cls.batchnum // 2)
-        ids = [e[0] for e in cls._tryton_icons[to_load]]
+        ids = [name2id[n] for n in names[to_load]]
         try:
             icons = rpc.execute('model', 'ir.ui.icon', 'read', ids,
                 ['name', 'icon'], rpc.CONTEXT)
         except TrytonServerError:
             icons = []
+        data = None
         for icon in icons:
             name = icon['name']
-            data = icon['icon'].encode('utf-8')
-            cls._icons[name] = data
-            cls._tryton_icons.remove((icon['id'], icon['name']))
-            del cls._name2id[icon['name']]
+            icondata = icon['icon'].encode('utf-8')
+            cls._icons[name] = icondata
+            if name == iconname:
+                data = icondata
+        return data
 
     @classmethod
     def get_pixbuf(cls, iconname, size=16, color=None, badge=None):
         if not iconname:
             return
         colors = CONFIG['icon.colors'].split(',')
-        cls.register_icon(iconname)
         if iconname not in cls._pixbufs[(size, badge)]:
-            data = None
-            if iconname in cls._icons:
-                data = cls._icons[iconname]
-            elif iconname in cls._local_icons:
-                path = cls._local_icons[iconname]
-                with open(path, 'rb') as fp:
-                    data = fp.read()
+            data = cls._get_icon(iconname)
             if not data:
-                logger.error("Unknown icon %s" % iconname)
                 return
             if not color:
                 color = colors[0]
@@ -199,16 +198,40 @@ class IconFactory:
         return urllib.parse.urlunsplit(parts)
 
     @classmethod
-    @lru_cache(maxsize=CONFIG['image.cache_size'])
-    def get_pixbuf_url(cls, url, size=16, size_param=None):
+    def _get_pixbuf_url(cls, url, size=16):
         if not url:
             return
-        url = cls._convert_url(url, size, size_param=size_param)
+        pixbuf = None
+        logger.info(f'GET {url}')
         try:
             with urllib.request.urlopen(url) as response:
-                return data2pixbuf(response.read(), size, size)
+                pixbuf = data2pixbuf(response.read(), size, size)
         except urllib.error.URLError:
             logger.info("Can not fetch %s", url, exc_info=True)
+        cls._url_pixbufs[url] = pixbuf
+        return pixbuf
+
+    @classmethod
+    def get_pixbuf_url(cls, url, size=16, size_param=None, callback=None):
+        if not url:
+            return
+
+        url = cls._convert_url(url, size, size_param=size_param)
+        pixbuf = cls._url_pixbufs.get(url)
+        if pixbuf is not None:
+            return pixbuf
+
+        if callback:
+            def fetch(url, size):
+                pixbuf = cls._get_pixbuf_url(url, size)
+                GLib.idle_add(lambda: callback(pixbuf))
+            cls._executor.submit(fetch, url, size)
+            if size not in cls._empty_pixbufs:
+                cls._empty_pixbufs[size] = _data2pixbuf(
+                    cls._empty_gif, size, size)
+            return cls._empty_pixbufs[size]
+        else:
+            return cls._get_pixbuf_url(url, size, size_param)
 
 
 IconFactory.load_local_icons()
@@ -844,7 +867,7 @@ class ErrorDialog(UniqueDialog):
         dialog = Gtk.MessageDialog(
             transient_for=parent, modal=True, destroy_with_parent=True,
             message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.NONE)
-        dialog.set_default_size(600, 400)
+        dialog.set_default_size(600, 200)
         dialog.set_position(Gtk.WindowPosition.CENTER)
 
         dialog.add_button(set_underline(_("Close")), Gtk.ResponseType.CANCEL)
@@ -859,6 +882,7 @@ class ErrorDialog(UniqueDialog):
         scrolledwindow.set_policy(
             Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolledwindow.set_shadow_type(Gtk.ShadowType.NONE)
+        scrolledwindow.set_min_content_height(300)
 
         viewport = Gtk.Viewport()
         viewport.set_shadow_type(Gtk.ShadowType.NONE)
@@ -870,8 +894,12 @@ class ErrorDialog(UniqueDialog):
 
         viewport.add(textview)
         scrolledwindow.add(viewport)
+        expander = Gtk.Expander()
+        expander.set_label(_("Details"))
+        expander.add(scrolledwindow)
+        expander.set_resize_toplevel(True)
         dialog.vbox.pack_start(
-            scrolledwindow, expand=True, fill=True, padding=0)
+            expander, expand=False, fill=True, padding=0)
 
         button_roundup = Gtk.LinkButton.new_with_label(
             CONFIG['bug.url'], _("Report Bug"))
@@ -1017,7 +1045,7 @@ def process_exception(exception, *args, **kwargs):
         elif exception.faultCode in map(str, HTTPStatus):
             err_msg = '[%s] %s' % (exception.faultCode, exception.faultString)
             message(
-                _('Error "%s". Try again later.') % err_msg,
+                _('Error: "%s". Try again later.') % err_msg,
                 msg_type=Gtk.MessageType.ERROR)
         else:
             error(exception, exception.faultString)
@@ -1297,10 +1325,15 @@ def RPCExecute(*args, **kwargs):
 
 
 def RPCContextReload(callback=None):
+    def clean(context):
+        return {
+            k: v for k, v in context.items()
+            if k != 'locale' and not k.endswith('.rec_name')}
+
     def update(context):
         rpc.context_reset()
         try:
-            rpc.CONTEXT.update(context())
+            rpc.CONTEXT.update(clean(context()))
         except RPCException:
             pass
         if callback:
@@ -1310,7 +1343,7 @@ def RPCContextReload(callback=None):
         callback=update if callback else None)
     if not callback:
         rpc.context_reset()
-        rpc.CONTEXT.update(context)
+        rpc.CONTEXT.update(clean(context))
 
 
 class Tooltips(object):

@@ -129,9 +129,7 @@
             this.main = jQuery('<div/>', {
                 'class': 'panel-body row',
             }).appendTo(this.el);
-            this.content = jQuery('<div/>', {
-                'class': 'col-xs-12',
-            }).appendTo(this.main);
+            this.content = jQuery('<div/>').appendTo(this.main);
 
             if (this.info_bar) {
                 this.el.append(this.info_bar.el);
@@ -248,7 +246,7 @@
                     }));
                 this.buttons[item.id] = button;
                 if (item.dropdown) {
-                    var dropdown = jQuery('<div/>', {
+                    jQuery('<div/>', {
                         'class': 'btn-group dropdown',
                         'role': 'group',
                     }).append(button.append(jQuery('<span/>', {
@@ -361,6 +359,9 @@
         },
         get_url: function() {
         },
+        get current_view_type() {
+            return 'form';
+        },
         compare: function(attributes) {
             return false;
         },
@@ -436,6 +437,7 @@
             'href': '#' + tab.id
         }).on('show.bs.tab', function() {
             Sao.set_url(tab.get_url(), tab.name_long.split(' / ').pop());
+            Sao.Tab.set_view_type(tab.current_view_type);
         })
         .append(jQuery('<button/>', {
             'class': 'close',
@@ -504,6 +506,11 @@
         }
     };
 
+    Sao.Tab.set_view_type = function(type) {
+        var tabcontent = jQuery('#tabcontent');
+        tabcontent.attr('data-view-type', type);
+    };
+
     Sao.Tab.Form = Sao.class_(Sao.Tab, {
         class_: 'tab-form',
         init: function(model_name, attributes) {
@@ -514,7 +521,8 @@
                 name = Sao.common.MODELNAME.get(model_name);
             }
             if (attributes.res_id) {
-                if (attributes.hasOwnProperty('tab_domain')) {
+                if (Object.prototype.hasOwnProperty.call(
+                    attributes, 'tab_domain')) {
                     delete attributes.tab_domain;
                 }
             }
@@ -543,8 +551,10 @@
                         attributes.res_id = [attributes.res_id];
                     }
                     screen.load(attributes.res_id);
-                    screen.current_record = screen.group.get(
-                        attributes.res_id[0]);
+                    if (attributes.res_id.length) {
+                        screen.current_record = screen.group.get(
+                            attributes.res_id[0]);
+                    }
                     screen.display();
                 } else {
                     if (screen.current_view.view_type == 'form') {
@@ -626,7 +636,7 @@
                         }));
                     }
                     buttons.forEach(function(button) {
-                        var item = jQuery('<li/>', {
+                        jQuery('<li/>', {
                             'role': 'presentation',
                             'class': menu_action[0] + '_button'
                         })
@@ -697,7 +707,7 @@
                 });
 
                 toolbars[menu_action[0]].forEach(action => {
-                    var item = jQuery('<li/>', {
+                    jQuery('<li/>', {
                         'role': 'presentation'
                     })
                         .append(jQuery('<a/>', {
@@ -755,7 +765,7 @@
                         }));
                     }
                     toolbars.exports.forEach(export_ => {
-                        var item = jQuery('<li/>', {
+                        jQuery('<li/>', {
                             'role': 'presentation',
                         })
                             .append(jQuery('<a/>', {
@@ -779,15 +789,17 @@
         create_tabcontent: function() {
             Sao.Tab.Form._super.create_tabcontent.call(this);
             this.attachment_preview = jQuery('<div/>', {
-                'class': 'col-xs-12 attachment-preview',
-            }).prependTo(this.main);
+                'class': 'attachment-preview',
+            }).hide().appendTo(this.main);
         },
         compare: function(attributes) {
             if (!attributes) {
                 return false;
             }
             var compare = Sao.common.compare;
-            return ((this.screen.model_name === attributes.model) &&
+            return (
+                (this.screen.view_index === 0) &&
+                (this.screen.model_name === attributes.model) &&
                 (this.attributes.res_id === attributes.res_id) &&
                 (compare(
                     this.attributes.domain || [], attributes.domain || [])) &&
@@ -1110,15 +1122,13 @@
             const preview = () => {
                 if (this.attachment_preview.children().length) {
                     this.attachment_preview.empty();
+                    this.attachment_preview.hide();
                     this.attachment_screen = null;
-                    this.attachment_preview.removeClass('col-md-4 col-md-push-8');
-                    this.content.removeClass('col-md-8 col-md-pull-4');
                 } else {
                     this.attachment_preview.append(
                         this._attachment_preview_el());
+                    this.attachment_preview.show();
                     this.refresh_attachment_preview();
-                    this.attachment_preview.addClass('col-md-4 col-md-push-8');
-                    this.content.addClass('col-md-8 col-md-pull-4');
                 }
             };
             var dropdown = this.buttons.attach.parents('.dropdown');
@@ -1613,12 +1623,15 @@
         get_url: function() {
             return this.screen.get_url(this.name);
         },
+        get current_view_type() {
+            return this.screen.current_view.view_type;
+        },
     });
 
     Sao.Tab.Board = Sao.class_(Sao.Tab, {
         class_: 'tab-board',
         init: function(attributes) {
-            var UIView, view_prm;
+            var UIView;
             Sao.Tab.Board._super.init.call(this, attributes);
             this.model = attributes.model;
             this.view_id = (attributes.view_ids.length > 0 ?
@@ -1634,7 +1647,6 @@
             this.view_prm = UIView.execute(
                 'view_get', [this.view_id], this.context);
             this.view_prm.done(view => {
-                var board;
                 view = jQuery(jQuery.parseXML(view.arch));
                 this.board = new Sao.View.Board(view, this.context);
                 this.board.actions_prms.done(() => {
@@ -1665,12 +1677,7 @@
             this.board.reload();
         },
         record_message: function() {
-            var i, len;
-            var action;
-
-            len = this.board.actions.length;
-            for (i = 0, len=len; i < len; i++) {
-                action = this.board.actions[i];
+            for (const action of this.board.actions) {
                 action.update_domain(this.board.actions);
             }
         },
@@ -1688,9 +1695,7 @@
             wizard.tab = this;
             this.create_tabcontent();
             this.set_name(wizard.name);
-            this.content.remove();
-            this.content = wizard.form;
-            this.main.css('padding-top', 0).append(wizard.form);
+            this.content.append(wizard.form);
         },
         create_toolbar: function() {
             return jQuery('<span/>');

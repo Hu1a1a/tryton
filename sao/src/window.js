@@ -445,7 +445,7 @@
                     for (const record of result) {
                         ids.push(record[0]);
                     }
-                    this.screen.group.load(ids, true);
+                    this.screen.group.load(ids, true, -1, null);
                     prm = this.screen.display();
                 }
                 prm.done(() => {
@@ -454,7 +454,7 @@
                 this.entry.val('');
             };
             var parser = new Sao.common.DomainParser();
-            var win = new Sao.Window.Search(model_name, callback, {
+            new Sao.Window.Search(model_name, callback, {
                 sel_multi: true,
                 context: this.context,
                 domain: domain,
@@ -767,7 +767,8 @@
             record.model.execute(
                 'read', [[record.id],
                     ['create_uid.rec_name', 'create_date',
-                        'write_uid.rec_name', 'write_date']], context
+                        'write_uid.rec_name', 'write_date',
+                        'xml_id']], context
             ).then(([log]) => {
                 var row, cell, label, input;
 
@@ -801,6 +802,39 @@
                 }).val(record.id).appendTo(cell);
                 input.css('text-align', 'end');
                 input.uniqueId();
+
+                if (log.xml_id) {
+                    const [module, xml_id] = log.xml_id.split('.', 2);
+
+                    row = jQuery('<tr/>').appendTo(body);
+                    cell = jQuery('<td/>').css('text-align', 'end').appendTo(row);
+                    label = jQuery('<label/>', {
+                        'class': 'form-label',
+                        'text': Sao.i18n.gettext("Module:"),
+                    }).appendTo(cell);
+                    label.uniqueId();
+                    cell = jQuery('<td/>').appendTo(row);
+                    input = jQuery('<input/>', {
+                        'readonly': true,
+                        'class': 'form-control input-sm',
+                        'aria-labelledby': label.attr('id'),
+                    }).val(module).appendTo(cell);
+                    input.uniqueId();
+
+                    cell = jQuery('<td/>').css('text-align', 'end').appendTo(row);
+                    label = jQuery('<label/>', {
+                        'class': 'form-label',
+                        'text': Sao.i18n.gettext("XML ID:"),
+                    }).appendTo(cell);
+                    label.uniqueId();
+                    cell = jQuery('<td/>').appendTo(row);
+                    input = jQuery('<input/>', {
+                        'readonly': true,
+                        'class': 'form-control input-sm',
+                        'aria-labelledby': label.attr('id'),
+                    }).val(xml_id).appendTo(cell);
+                    input.uniqueId();
+                }
 
                 [['create_uid.', Sao.i18n.gettext("Created by:"),
                     'create_date', Sao.i18n.gettext("Created at:")],
@@ -1209,7 +1243,7 @@
                 'class': 'col-md-2'
             }).appendTo(row_fields);
 
-            var button_add = jQuery('<button/>', {
+            jQuery('<button/>', {
                 'class': 'btn btn-default btn-block',
                 'type': 'button',
                 'title': Sao.i18n.gettext("Add"),
@@ -1270,7 +1304,7 @@
             var row_csv_param = jQuery('<div/>', {
             }).appendTo(this.dialog.body);
 
-            var csv_param_label = jQuery('<label/>', {
+            jQuery('<label/>', {
                 'text': Sao.i18n.gettext('CSV Parameters')
             }).append(jQuery('<span/>', {
                 'class': 'caret',
@@ -1324,7 +1358,7 @@
                 'id': 'input-quotechar',
                 'size': '1',
                 'maxlength': '1',
-                'value': '\"',
+                'value': '"',
             });
 
             jQuery('<div/>', {
@@ -1452,18 +1486,21 @@
         },
         sig_sel_add: function(el_field) {
             el_field = jQuery(el_field);
-            var field = el_field.attr('field');
-            var node = jQuery('<li/>', {
+            this._add_node(el_field.attr('field'), el_field.attr('name'));
+        },
+        _add_node: function(field, name) {
+            jQuery('<li/>', {
                 'field': field,
                 'class': 'draggable-handle',
-            }).text(el_field.attr('name')).prepend(
+            }).text(name).prepend(
                 Sao.common.ICONFACTORY.get_icon_img('tryton-drag')
-            ).click(function(e) {
-                if (e.ctrlKey || e.metaKey) {
+            ).click(function(evt) {
+                const node = jQuery(evt.target);
+                if (evt.ctrlKey || evt.metaKey) {
                     node.toggleClass('bg-primary');
                 } else {
-                    jQuery(e.target).addClass('bg-primary')
-                        .siblings().removeClass('bg-primary');
+                    node.addClass('bg-primary');
+                    node.siblings().removeClass('bg-primary');
                 }
             }).appendTo(this.fields_selected);
         },
@@ -1603,12 +1640,7 @@
                     Sao.i18n.gettext('Error'));
                 return false;
             }
-            var node = jQuery('<li/>', {
-                'field': field
-            }).text(name).click(() => {
-                node.addClass('bg-primary')
-                    .siblings().removeClass('bg-primary');
-            }).appendTo(this.fields_selected);
+            this._add_node(field, name);
             return true;
         },
         _traverse: function(fields, prefix, parents, i) {

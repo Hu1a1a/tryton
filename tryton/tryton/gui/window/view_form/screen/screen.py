@@ -538,6 +538,10 @@ class Screen:
     def number_of_views(self):
         return len(self.views) + len(self.view_to_load)
 
+    @property
+    def view_index(self):
+        return self.__current_view
+
     def switch_view(
             self, view_type=None, view_id=None, creatable=None, display=True):
         if view_id is not None:
@@ -823,7 +827,10 @@ class Screen:
                 context=self.context)
         except RPCException:
             return False
-        self.load(new_ids, position=self.new_position)
+        self.group.load(new_ids, position=self.new_position)
+        if new_ids:
+            self.current_record = self.group.get(new_ids[0])
+        self.display(set_cursor=True)
         return True
 
     def set_tree_state(self):
@@ -1144,6 +1151,8 @@ class Screen:
     def selected_paths(self):
         if self.current_view and self.current_view.view_type == 'tree':
             return self.current_view.get_selected_paths()
+        else:
+            return []
 
     @property
     def listed_records(self):
@@ -1299,13 +1308,13 @@ class Screen:
         if name:
             query_string.append(
                 ('name', json.dumps(name, separators=(',', ':'))))
-        if self.screen_container.tab_domain:
-            query_string.append(('tab_domain', json.dumps(
-                        self.screen_container.tab_domain,
-                        cls=JSONEncoder, separators=(',', ':'))))
         path = [CONFIG['login.db'], 'model', self.model_name]
         view_ids = [v.view_id for v in self.views] + self.view_ids
         if self.current_view.view_type != 'form':
+            if self.screen_container.tab_domain:
+                query_string.append(('tab_domain', json.dumps(
+                            self.screen_container.tab_domain,
+                            cls=JSONEncoder, separators=(',', ':'))))
             if self.search_value:
                 search_value = self.search_value
             else:

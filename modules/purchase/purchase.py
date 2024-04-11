@@ -183,8 +183,15 @@ class Purchase(
             'account.invoice', None, None, "Invoices"),
         'get_invoices', searcher='search_invoices')
     invoices_ignored = fields.Many2Many(
-            'purchase.purchase-ignored-account.invoice',
-            'purchase', 'invoice', 'Ignored Invoices', readonly=True)
+        'purchase.purchase-ignored-account.invoice',
+        'purchase', 'invoice', "Ignored Invoices",
+        domain=[
+            ('id', 'in', Eval('invoices', [])),
+            ('state', '=', 'cancelled'),
+            ],
+        states={
+            'invisible': ~Eval('invoices_ignored', []),
+            })
     invoices_recreated = fields.Many2Many(
             'purchase.purchase-recreated-account.invoice',
             'purchase', 'invoice', 'Recreated Invoices', readonly=True)
@@ -302,7 +309,7 @@ class Purchase(
                     },
                 'process': {
                     'invisible': ~Eval('state').in_(
-                        ['confirmed', 'processing']),
+                        ['confirmed', 'processing', 'done']),
                     'icon': If(Eval('state') == 'confirmed',
                         'tryton-forward', 'tryton-refresh'),
                     'depends': ['state'],
@@ -575,12 +582,20 @@ class Purchase(
         skips = set(self.invoices_ignored)
         skips.update(self.invoices_recreated)
         invoices = [i for i in self._invoices_for_state if i not in skips]
+
+        def is_cancelled(invoice):
+            return invoice.state == 'cancelled' and not invoice.cancel_move
+
+        def is_paid(invoice):
+            return (
+                invoice.state == 'paid'
+                or (invoice.state == 'cancelled' and invoice.cancel_move))
         if invoices:
-            if any(i.state == 'cancelled' for i in invoices):
+            if any(is_cancelled(i) for i in invoices):
                 return 'exception'
-            elif all(i.state == 'paid' for i in invoices):
+            elif all(is_paid(i) for i in invoices):
                 return 'paid'
-            elif any(i.state == 'paid' for i in invoices):
+            elif any(is_paid(i) for i in invoices):
                 return 'partially paid'
             elif any(i.state == 'posted' for i in invoices):
                 return 'awaiting payment'
@@ -1040,7 +1055,11 @@ class PurchaseIgnoredInvoice(ModelSQL):
     purchase = fields.Many2One(
         'purchase.purchase', "Purchase", ondelete='CASCADE', required=True)
     invoice = fields.Many2One(
-        'account.invoice', "Invoice", ondelete='RESTRICT', required=True)
+        'account.invoice', "Invoice", ondelete='RESTRICT', required=True,
+        domain=[
+            ('purchases', '=', Eval('purchase', -1)),
+            ('state', '=', 'cancelled'),
+            ])
 
     @classmethod
     def __register__(cls, module):
@@ -1056,7 +1075,11 @@ class PurchaseRecreatedInvoice(ModelSQL):
     purchase = fields.Many2One(
         'purchase.purchase', "Purchase", ondelete='CASCADE', required=True)
     invoice = fields.Many2One(
-        'account.invoice', "Invoice", ondelete='RESTRICT', required=True)
+        'account.invoice', "Invoice", ondelete='RESTRICT', required=True,
+        domain=[
+            ('purchases', '=', Eval('purchase', -1)),
+            ('state', '=', 'cancelled'),
+            ])
 
     @classmethod
     def __register__(cls, module):
@@ -1239,8 +1262,16 @@ class Line(sequence_ordered(), ModelSQL, ModelView):
         states={
             'invisible': ~Eval('moves'),
             })
-    moves_ignored = fields.Many2Many('purchase.line-ignored-stock.move',
-            'purchase_line', 'move', 'Ignored Moves', readonly=True)
+    moves_ignored = fields.Many2Many(
+        'purchase.line-ignored-stock.move', 'purchase_line', 'move',
+        "Ignored Moves",
+        domain=[
+            ('id', 'in', Eval('moves', [])),
+            ('state', '=', 'cancelled'),
+            ],
+        states={
+            'invisible': ~Eval('moves_ignored'),
+            })
     moves_recreated = fields.Many2Many('purchase.line-recreated-stock.move',
             'purchase_line', 'move', 'Recreated Moves', readonly=True)
     moves_exception = fields.Function(
@@ -2056,7 +2087,11 @@ class LineIgnoredMove(ModelSQL):
     purchase_line = fields.Many2One(
         'purchase.line', "Purchase Line", ondelete='CASCADE', required=True)
     move = fields.Many2One(
-        'stock.move', "Move", ondelete='RESTRICT', required=True)
+        'stock.move', "Move", ondelete='RESTRICT', required=True,
+        domain=[
+            ('origin.id', '=', Eval('purchase_line', -1), 'purchase.line'),
+            ('state', '=', 'cancelled'),
+            ])
 
     @classmethod
     def __register__(cls, module):
@@ -2072,7 +2107,11 @@ class LineRecreatedMove(ModelSQL):
     purchase_line = fields.Many2One(
         'purchase.line', "Purchase Line", ondelete='CASCADE', required=True)
     move = fields.Many2One(
-        'stock.move', "Move", ondelete='RESTRICT', required=True)
+        'stock.move', "Move", ondelete='RESTRICT', required=True,
+        domain=[
+            ('origin.id', '=', Eval('purchase_line', -1), 'purchase.line'),
+            ('state', '=', 'cancelled'),
+            ])
 
     @classmethod
     def __register__(cls, module):

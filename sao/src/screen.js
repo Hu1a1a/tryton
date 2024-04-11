@@ -187,7 +187,7 @@
                     'class': 'nav nav-tabs',
                     role: 'tablist'
                 }).appendTo(this.tab);
-                var content = jQuery('<div/>', {
+                jQuery('<div/>', {
                     'class': 'tab-content'
                 }).appendTo(this.tab);
                 this.tab_domain.forEach((tab_domain, i) => {
@@ -196,7 +196,7 @@
                         'class': 'badge badge-empty'
                     }).html('&nbsp;');
                     counter.css('visibility', 'hidden');
-                    var page = jQuery('<li/>', {
+                    jQuery('<li/>', {
                         role: 'presentation',
                         id: 'nav-' + i
                     }).append(jQuery('<a/>', {
@@ -303,11 +303,9 @@
             if (current_text) {
                 var current_domain = this.screen.domain_parser.parse(
                         current_text);
-                var star = this.get_star();
                 var bookmarks = this.bookmarks();
                 for (const bookmark of bookmarks) {
                     const id = bookmark[0];
-                    const name = bookmark[1];
                     const domain = bookmark[2];
                     const access = bookmark[3];
                     const text = this.screen.domain_parser.string(domain);
@@ -927,6 +925,9 @@
         get number_of_views() {
             return this.views.length + this.view_to_load.length;
         },
+        get view_index() {
+            return this.views.indexOf(this.current_view);
+        },
         switch_view: function(
             view_type=null, view_id=null, creatable=null, display=true) {
             if (view_id !== null) {
@@ -980,6 +981,8 @@
                         if (this.switch_callback) {
                             this.switch_callback();
                         }
+                        Sao.Tab.set_view_type(
+                            Sao.Tab.tabs.get_current().view_type);
                     });
                 };
                 const set_current_view = () => {
@@ -1003,9 +1006,8 @@
                         return this.add_view_id(view_id, view_type)
                             .then(set_current_view);
                     } else {
-                        var i = this.views.indexOf(this.current_view);
                         this.current_view = this.views[
-                            (i + 1) % this.views.length];
+                            (this.view_index + 1) % this.views.length];
                     }
                     if (found()) {
                         break;
@@ -1317,7 +1319,7 @@
             }
         },
         load: function(ids, set_cursor=true, modified=false, position=-1) {
-            this.group.load(ids, modified, position);
+            this.group.load(ids, modified, position, null);
             this.current_view.reset();
             this.current_record = null;
             return this.display(set_cursor);
@@ -1350,7 +1352,8 @@
             }
             return jQuery.when.apply(jQuery, deferreds).then(
                 () => this.set_tree_state().then(() => {
-                    this.current_record = this.current_record;
+                    var record = this.current_record
+                    this.current_record = record;
                     // set_cursor must be called after set_tree_state because
                     // set_tree_state redraws the tree
                     if (set_cursor) {
@@ -1443,6 +1446,8 @@
         get selected_paths() {
             if (this.current_view && this.current_view.view_type == 'tree') {
                 return this.current_view.get_selected_paths();
+            } else {
+                return [];
             }
         },
         get listed_records() {
@@ -1459,6 +1464,8 @@
         get listed_paths() {
             if (this.current_view && this.current_view.view_type == 'tree') {
                 return this.current_view.get_listed_paths();
+            } else {
+                return [];
             }
         },
         clear: function() {
@@ -1700,11 +1707,11 @@
             var records = this.current_view.selected_records;
             this.model.copy(records, this.context)
                 .then(new_ids => {
-                    this.group.load(new_ids, false, this.new_position);
+                    this.group.load(new_ids, false, this.new_position, null);
                     if (!jQuery.isEmptyObject(new_ids)) {
                         this.current_record = this.group.get(new_ids[0]);
                     }
-                    this.display().always(dfd.resolve);
+                    this.display(true).always(dfd.resolve);
                 }, dfd.reject);
             return dfd.promise();
         },
@@ -2066,14 +2073,14 @@
             if (name) {
                 query_string.push(['name', dumps(name)]);
             }
-            if (!jQuery.isEmptyObject(this.attributes.tab_domain)) {
-                query_string.push([
-                    'tab_domain', dumps(this.attributes.tab_domain)]);
-            }
             var path = ['model', this.model_name];
             var view_ids = this.views.map(
                 function(v) {return v.view_id;}).concat(this.view_ids);
             if (this.current_view.view_type != 'form') {
+                if (!jQuery.isEmptyObject(this.attributes.tab_domain)) {
+                    query_string.push([
+                        'tab_domain', dumps(this.attributes.tab_domain)]);
+                }
                 var search_value;
                 if (this.attributes.search_value) {
                     search_value = this.attributes.search_value;
@@ -2119,9 +2126,6 @@
                 view = this.views[i];
                 if (view.view_type == 'form') {
                     for (var wid_key in view.widgets) {
-                        if (!view.widgets.hasOwnProperty(wid_key)) {
-                            continue;
-                        }
                         widgets = view.widgets[wid_key];
                         for (wi = 0, wlen = widgets.length; wi < wlen; wi++) {
                             if (widgets[wi].screen) {
