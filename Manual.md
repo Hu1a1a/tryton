@@ -3,7 +3,7 @@
 
 ```console
 python -m venv venv
-call .\venv\Scripts\activate.bat
+call .\.venv\Scripts\activate.bat
 
 python .hooks/link_modules
 **cmd con administrador**
@@ -35,9 +35,10 @@ python bin/trytond -c trytond.conf
 ```
 
 ### delete module:
-- marketing_campaign
-- authentication_saml
 - account_statement_coda
+- authentication_saml
+- marketing_campaign
+
 
 
 ## module change
