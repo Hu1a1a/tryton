@@ -1,0 +1,255 @@
+#
+msgid ""
+msgstr "Content-Type: text/plain; charset=utf-8\n"
+
+msgctxt "field:marketing.campaign,name:"
+msgid "Name"
+msgstr "Naziv"
+
+msgctxt "field:marketing.medium,name:"
+msgid "Name"
+msgstr "Naziv"
+
+msgctxt "field:marketing.source,name:"
+msgid "Name"
+msgstr "Naziv"
+
+msgctxt "field:sale.opportunity.reporting.marketing.context,company:"
+msgid "Company"
+msgstr "Družba"
+
+msgctxt "field:sale.opportunity.reporting.marketing.context,from_date:"
+msgid "From Date"
+msgstr "Od datuma"
+
+msgctxt "field:sale.opportunity.reporting.marketing.context,period:"
+msgid "Period"
+msgstr "Obdobje"
+
+msgctxt "field:sale.opportunity.reporting.marketing.context,to_date:"
+msgid "To Date"
+msgstr "Do datuma"
+
+msgctxt "field:sale.reporting.marketing.context,company:"
+msgid "Company"
+msgstr "Družba"
+
+msgctxt "field:sale.reporting.marketing.context,from_date:"
+msgid "From Date"
+msgstr "Od datuma"
+
+msgctxt "field:sale.reporting.marketing.context,period:"
+msgid "Period"
+msgstr "Obdobje"
+
+msgctxt "field:sale.reporting.marketing.context,to_date:"
+msgid "To Date"
+msgstr "Do datuma"
+
+msgctxt "field:sale.reporting.marketing.context,warehouse:"
+msgid "Warehouse"
+msgstr "Skladišče"
+
+msgctxt "model:ir.action,name:act_campaign_form"
+msgid "Campaigns"
+msgstr "Kampanije"
+
+msgctxt "model:ir.action,name:act_medium_form"
+msgid "Mediums"
+msgstr "Mediji"
+
+msgctxt "model:ir.action,name:act_sale_opportunity_reporting_marketing"
+msgid "Opportunities per Marketing"
+msgstr "Priložnosti po marketingu"
+
+msgctxt "model:ir.action,name:act_sale_reporting_marketing"
+msgid "Sales per Marketing"
+msgstr "Prodaja po marketingu"
+
+msgctxt "model:ir.action,name:act_source_form"
+msgid "Sources"
+msgstr "Izvori"
+
+msgctxt "model:ir.message,text:msg_marketing_campaign"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "model:ir.message,text:msg_marketing_medium"
+msgid "Marketing Medium"
+msgstr "Marketinški medij"
+
+msgctxt "model:ir.message,text:msg_marketing_source"
+msgid "Marketing Source"
+msgstr "Marketinški izvor"
+
+msgctxt "model:ir.message,text:msg_parameter_name_unique"
+msgid "Name of active marketing parameter must be unique."
+msgstr "Ime aktivnega marketinškega parametra mora biti edinstveno."
+
+msgctxt "model:ir.ui.menu,name:menu_campaign_form"
+msgid "Campaigns"
+msgstr "Kampanije"
+
+msgctxt "model:ir.ui.menu,name:menu_medium_form"
+msgid "Mediums"
+msgstr "Mediji"
+
+msgctxt "model:ir.ui.menu,name:menu_source_form"
+msgid "Sources"
+msgstr "Izvori"
+
+msgctxt "model:marketing.campaign,name:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "model:marketing.medium,name:"
+msgid "Marketing Medium"
+msgstr "Marketinški medij"
+
+msgctxt "model:marketing.source,name:"
+msgid "Marketing Source"
+msgstr "Marketinški izvor"
+
+msgctxt "model:sale.opportunity.reporting.marketing,name:"
+msgid "Sale Opportunity Reporting per Marketing"
+msgstr "Poročanje prodajnih priložnosti po marketingu"
+
+msgctxt "model:sale.opportunity.reporting.marketing.context,name:"
+msgid "Sale Opportunity Reporting Context"
+msgstr "Konteks poročanja prodajnih priložnosti"
+
+msgctxt "model:sale.reporting.marketing,name:"
+msgid "Sale Reporting per Marketing"
+msgstr "Poročanje prodaje po marketingu"
+
+msgctxt "model:sale.reporting.marketing.context,name:"
+msgid "Sale Reporting Context"
+msgstr "Kontekst poročanja prodaje"
+
+msgctxt "selection:sale.opportunity.reporting.marketing.context,period:"
+msgid "Day"
+msgstr "Dan"
+
+msgctxt "selection:sale.opportunity.reporting.marketing.context,period:"
+msgid "Month"
+msgstr "Mesec"
+
+msgctxt "selection:sale.opportunity.reporting.marketing.context,period:"
+msgid "Year"
+msgstr "Leto"
+
+msgctxt "selection:sale.reporting.marketing.context,period:"
+msgid "Day"
+msgstr "Dan"
+
+msgctxt "selection:sale.reporting.marketing.context,period:"
+msgid "Month"
+msgstr "Mesec"
+
+msgctxt "selection:sale.reporting.marketing.context,period:"
+msgid "Year"
+msgstr "Leto"
+
+#, fuzzy
+msgctxt "view:marketing.automation.activity:"
+msgid "Campaign"
+msgstr "Kampanija"
+
+#, fuzzy
+msgctxt "view:marketing.automation.activity:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+#, fuzzy
+msgctxt "view:marketing.automation.activity:"
+msgid "Medium"
+msgstr "Medij"
+
+#, fuzzy
+msgctxt "view:marketing.automation.activity:"
+msgid "Source"
+msgstr "Izvor"
+
+#, fuzzy
+msgctxt "view:marketing.email.message:"
+msgid "Campaign"
+msgstr "Kampanija"
+
+#, fuzzy
+msgctxt "view:marketing.email.message:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+#, fuzzy
+msgctxt "view:marketing.email.message:"
+msgid "Medium"
+msgstr "Medij"
+
+#, fuzzy
+msgctxt "view:marketing.email.message:"
+msgid "Source"
+msgstr "Izvor"
+
+msgctxt "view:sale.opportunity.reporting.context:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "view:sale.opportunity.reporting.marketing.context:"
+msgid "Group by:"
+msgstr "Združi po:"
+
+msgctxt "view:sale.opportunity:"
+msgid "Campaign"
+msgstr "Kampanija"
+
+msgctxt "view:sale.opportunity:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "view:sale.opportunity:"
+msgid "Medium"
+msgstr "Medij"
+
+msgctxt "view:sale.opportunity:"
+msgid "Source"
+msgstr "Izvor"
+
+msgctxt "view:sale.point.sale:"
+msgid "Campaign"
+msgstr "Kampanija"
+
+msgctxt "view:sale.point.sale:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "view:sale.point.sale:"
+msgid "Medium"
+msgstr "Medij"
+
+msgctxt "view:sale.point.sale:"
+msgid "Source"
+msgstr "Izvor"
+
+msgctxt "view:sale.reporting.context:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "view:sale.reporting.marketing.context:"
+msgid "Group by:"
+msgstr "Združi po:"
+
+msgctxt "view:sale.sale:"
+msgid "Campaign"
+msgstr "Kampanija"
+
+msgctxt "view:sale.sale:"
+msgid "Marketing Campaign"
+msgstr "Marketinška kampanija"
+
+msgctxt "view:sale.sale:"
+msgid "Medium"
+msgstr "Medij"
+
+msgctxt "view:sale.sale:"
+msgid "Source"
+msgstr "Izvor"
