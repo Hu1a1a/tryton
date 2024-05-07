@@ -12,3 +12,4 @@ package-lock.json
 .venv
 tryton.mo
 tryton*.exe
+venv
