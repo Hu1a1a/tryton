@@ -864,11 +864,11 @@ class Main(Gtk.Application):
             halign=Gtk.Align.START)
         self.tooltips.set_tip(label, page.name)
         self.tooltips.enable()
-        eventbox = Gtk.EventBox()
+
         def remove_book_middle_click(widget, event):
             if event.button == 2:
                 return self._sig_remove_book(widget, page.widget)
-            return
+        eventbox = Gtk.EventBox()
         eventbox.connect('button-press-event', remove_book_middle_click)
         eventbox.add(label)
         hbox.pack_start(eventbox, expand=True, fill=True, padding=0)
