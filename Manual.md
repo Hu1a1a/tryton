@@ -4,6 +4,7 @@
 ```console
 python -m venv venv
 call .\.venv\Scripts\activate.bat
+source venv/bin/activate
 
 python .hooks/link_modules
 **cmd con administrador**
