@@ -35,11 +35,16 @@ python bin/trytond-admin -c trytond.conf -d tryton --all
 python bin/trytond -c trytond.conf
 ```
 
+## gunicorn
+
+```
+gunicorn --workers=5 --worker-class=gevent -b 0.0.0.0:8000 -c gunicorn.config.py trytond.application:app
+```
+
 ### delete module:
 - account_statement_coda
 - authentication_saml
 - marketing_campaign
-
 
 
 ## module change

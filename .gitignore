@@ -13,3 +13,4 @@ package-lock.json
 tryton.mo
 tryton*.exe
 venv
+dist
