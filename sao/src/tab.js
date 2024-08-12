@@ -470,6 +470,12 @@
             id: tab.id
         }).append(tab.el)
         .appendTo(tabcontent);
+        tab_link.on('mousedown', function(evt) {
+            if ( evt.which === 2 ) {
+            evt.preventDefault();    
+            tab.close();
+            }
+        });
         tab_link.on('hide.bs.tab', function(evt) {
             jQuery(evt.target).data('scrollTop', tabs.scrollTop());
         });

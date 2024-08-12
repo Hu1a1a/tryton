@@ -10,3 +10,5 @@ tests
 sao/locale
 package-lock.json
 .venv
+tryton.mo
+tryton*.exe
