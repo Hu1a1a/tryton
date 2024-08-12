@@ -44,6 +44,7 @@ sudo systemctl daemon-reload
 sudo systemctl start trytond
 sudo systemctl stop trytond
 sudo systemctl status trytond
+sudo systemctl restart trytond
 ```
 
 ### delete module:
