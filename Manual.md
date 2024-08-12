@@ -27,7 +27,7 @@ use just grunt
 ```
 
 ## trytond:
-
+Into trytond folder:
 ```console
 pip install .
 python bin/trytond-admin -c trytond.conf -d tryton -p
@@ -35,10 +35,15 @@ python bin/trytond-admin -c trytond.conf -d tryton --all
 python bin/trytond -c trytond.conf
 ```
 
-## gunicorn
-
+## gunicorn and server
+Into trytond folder:
 ```
 gunicorn --workers=5 --worker-class=gevent -b 0.0.0.0:8000 -c gunicorn.config.py trytond.application:app
+into service: /etc/systemd/system/trytond.service
+sudo systemctl daemon-reload
+sudo systemctl start trytond
+sudo systemctl stop trytond
+sudo systemctl status trytond
 ```
 
 ### delete module:

@@ -1,0 +1,24 @@
+[Unit]
+Description=The Trytond ERP server
+After=network.target
+Requires=network.target
+
+[Service]
+Type=notify
+User=itsupport
+Group=itsupport
+RuntimeDirectory=trytond
+WorkingDirectory=/home/itsupport/tryton-BC/trytond
+ExecStart=/home/itsupport/tryton-BC/venv/bin/gunicorn \
+    --workers=5 \
+    --worker-class=gevent \
+    --bind=0.0.0.0:8000 \
+    -c=gunicorn.py \
+    'trytond.application:app'
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
