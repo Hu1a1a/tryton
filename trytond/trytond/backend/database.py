@@ -156,6 +156,16 @@ class DatabaseInterface(object):
             return
         raise NotImplementedError
 
+    def sequence_nextval(self, connection, name):
+        if not self.has_sequence():
+            return
+        raise NotImplementedError
+
+    def sequence_nextvals(self, connection, name, n):
+        if not self.has_sequence():
+            return
+        raise NotImplementedError
+
     def sequence_next_number(self, connection, name):
         if not self.has_sequence():
             return

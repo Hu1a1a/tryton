@@ -84,7 +84,7 @@ class Party(
         fields.Char("Fax", states=_contact_mechanism_states),
         'get_contact_mechanism', setter='set_contact_mechanism')
     email = fields.Function(
-        fields.Char("E-Mail", states=_contact_mechanism_states),
+        fields.Char("Email", states=_contact_mechanism_states),
         'get_contact_mechanism', setter='set_contact_mechanism')
     website = fields.Function(
         fields.Char("Website", states=_contact_mechanism_states),
@@ -102,8 +102,8 @@ class Party(
             ('code_uniq', Unique(t, t.code), 'party.msg_party_code_unique')
             ]
         cls._sql_indexes.update({
-                Index(t, (t.code, Index.Equality())),
-                Index(t, (t.code, Index.Similarity())),
+                Index(t, (t.code, Index.Equality(cardinality='high'))),
+                Index(t, (t.code, Index.Similarity(cardinality='high'))),
                 })
         cls._order.insert(0, ('distance', 'ASC NULLS LAST'))
         cls._order.insert(1, ('name', 'ASC'))
@@ -280,21 +280,25 @@ class Party(
         return index
 
     @classmethod
-    def _new_code(cls, **pattern):
+    def _code_sequence(cls, **pattern):
         pool = Pool()
         Configuration = pool.get('party.configuration')
         config = Configuration(1)
-        sequence = config.get_multivalue('party_sequence', **pattern)
-        if sequence:
-            return sequence.get()
+        return config.get_multivalue('party_sequence', **pattern)
 
     @classmethod
     def create(cls, vlist):
         vlist = [x.copy() for x in vlist]
+        missing_code = []
         for values in vlist:
             if not values.get('code'):
-                values['code'] = cls._new_code()
+                missing_code.append(values)
             values.setdefault('addresses', None)
+        if missing_code:
+            if sequence := cls._code_sequence():
+                for values, code in zip(
+                        missing_code, sequence.get_many(len(missing_code))):
+                    values['code'] = code
         return super(Party, cls).create(vlist)
 
     @classmethod
@@ -600,6 +604,7 @@ IDENTIFIER_TYPES = [
     ('gb_nhs',
         "United Kingdom National Health Service Patient Identifier"),
     ('gb_upn', "English Unique Pupil Number"),
+    ('gb_utr', "United Kingdom Unique Taxpayer Reference"),
     ('gb_vat', "United Kingdom (and Isle of Man) VAT Number"),
     ('gh_tin', "Ghanaian Taxpayer Identification Number"),
     ('gn_nifp', "Guinean Tax Number"),

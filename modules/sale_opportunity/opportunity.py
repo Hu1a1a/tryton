@@ -159,13 +159,13 @@ class SaleOpportunity(
         t = cls.__table__()
         cls._sql_indexes.update({
                 Index(t, (t.reference, Index.Similarity())),
-                Index(t, (t.party, Index.Equality())),
+                Index(t, (t.party, Index.Range())),
                 Index(
                     t,
                     (t.start_date, Index.Range(order='DESC')),
                     (t.end_date, Index.Range(order='DESC'))),
                 Index(
-                    t, (t.state, Index.Equality()),
+                    t, (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['lead', 'opportunity'])),
                 })
         cls._order.insert(0, ('start_date', 'DESC'))
@@ -575,7 +575,9 @@ class SaleOpportunityLine(sequence_ordered(), ModelSQL, ModelView):
             'readonly': _states['readonly'],
             })
     description = fields.Text("Description", states=_states)
-    summary = fields.Function(fields.Char("Summary"), 'on_change_with_summary')
+    summary = fields.Function(
+        fields.Char("Summary"), 'on_change_with_summary',
+        searcher='search_summary')
     note = fields.Text("Note")
 
     company = fields.Function(
@@ -624,6 +626,10 @@ class SaleOpportunityLine(sequence_ordered(), ModelSQL, ModelView):
     @fields.depends('description')
     def on_change_with_summary(self, name=None):
         return firstline(self.description or '')
+
+    @classmethod
+    def search_summary(cls, name, clause):
+        return [('description', *clause[1:])]
 
     @fields.depends('opportunity', '_parent_opportunity.company')
     def on_change_with_company(self, name=None):

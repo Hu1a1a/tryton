@@ -40,7 +40,9 @@ class PurchaseRequest(ModelSQL, ModelView):
             },
         depends={'company'})
     description = fields.Text('Description', readonly=True)
-    summary = fields.Function(fields.Char('Summary'), 'on_change_with_summary')
+    summary = fields.Function(
+        fields.Char('Summary'), 'on_change_with_summary',
+        searcher='search_summary')
     party = fields.Many2One(
         'party.party', "Party", states=STATES,
         context={
@@ -112,7 +114,7 @@ class PurchaseRequest(ModelSQL, ModelView):
         cls._sql_indexes.add(
             Index(
                 t,
-                (t.state, Index.Equality()),
+                (t.state, Index.Equality(cardinality='low')),
                 where=t.state.in_(['draft', 'purchased', 'exception'])))
         cls._order[0] = ('id', 'DESC')
         cls._buttons.update({
@@ -254,6 +256,10 @@ class PurchaseRequest(ModelSQL, ModelView):
         return firstline(self.description or '')
 
     @classmethod
+    def search_summary(cls, name, clause):
+        return [('description', *clause[1:])]
+
+    @classmethod
     def _get_origin(cls):
         'Return the set of Model names for origin Reference'
         return set()
@@ -391,7 +397,7 @@ class CreatePurchase(Wizard):
         '''
         return (
             ('product', request.product),
-            ('description', request.description),
+            ('description', request.description or ''),
             ('unit', request.unit),
             )
 

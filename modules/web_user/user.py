@@ -18,7 +18,7 @@ try:
     import html2text
 except ImportError:
     html2text = None
-from sql import Literal
+from sql import Literal, Null
 from sql.conditionals import Coalesce
 from sql.functions import CurrentTimestamp
 from sql.operators import Equal
@@ -73,12 +73,12 @@ class User(avatar_mixin(100), DeactivableMixin, ModelSQL, ModelView):
     _rec_name = 'email'
 
     email = fields.Char(
-        "E-mail",
+        "Email",
         states={
             'required': Eval('active', True),
             })
-    email_valid = fields.Boolean('E-mail Valid')
-    email_token = fields.Char("E-mail Token", strip=False)
+    email_valid = fields.Boolean('Email Valid')
+    email_token = fields.Char("Email Token", strip=False)
     password_hash = fields.Char('Password Hash')
     password = fields.Function(
         fields.Char('Password'), 'get_password', setter='set_password')
@@ -100,8 +100,12 @@ class User(avatar_mixin(100), DeactivableMixin, ModelSQL, ModelView):
                 'web_user.msg_user_email_unique'),
             ]
         cls._sql_indexes.update({
-                Index(table, (table.email, Index.Equality())),
-                Index(table, (table.email_token, Index.Equality())),
+                Index(
+                    table, (table.email, Index.Equality(cardinality='high'))),
+                Index(
+                    table,
+                    (table.email_token, Index.Equality(cardinality='high')),
+                    where=table.email_token != Null),
                 })
         cls._buttons.update({
                 'validate_email': {
@@ -186,7 +190,7 @@ class User(avatar_mixin(100), DeactivableMixin, ModelSQL, ModelView):
                     validate_email(user.email)
                 except EmailNotValidError as e:
                     raise UserValidationError(gettext(
-                            'web_user.msg_email_invalid',
+                            'web_user.msg_user_email_invalid',
                             user=user.rec_name,
                             email=user.email),
                         str(e)) from e
@@ -461,7 +465,7 @@ class UserSession(ModelSQL):
                     table,
                     (Coalesce(table.write_date, table.create_date),
                         Index.Range())),
-                Index(table, (table.key, Index.Equality())),
+                Index(table, (table.key, Index.Equality(cardinality='high'))),
                 })
 
     @classmethod

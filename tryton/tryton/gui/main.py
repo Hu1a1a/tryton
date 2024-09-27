@@ -463,10 +463,6 @@ class Main(Gtk.Application):
                         'id': id_,
                         })
 
-        def _manage_favorites(widget):
-            Window.create(self.menu_screen.model_name + '.favorite',
-                mode=['tree', 'form'],
-                name=_("Favorites"))
         try:
             favorites = RPCExecute('model',
                 self.menu_screen.model_name + '.favorite', 'get',
@@ -477,11 +473,6 @@ class Main(Gtk.Application):
             menuitem = Gtk.MenuItem(label=name)
             menuitem.connect('activate', _action_favorite, id_)
             self.menu_favorite.add(menuitem)
-        self.menu_favorite.add(Gtk.SeparatorMenuItem())
-        manage_favorites = Gtk.MenuItem(label=_("Manage..."),
-            use_underline=True)
-        manage_favorites.connect('activate', _manage_favorites)
-        self.menu_favorite.add(manage_favorites)
         self.menu_favorite.show_all()
 
     def favorite_unset(self):
@@ -772,6 +763,9 @@ class Main(Gtk.Application):
             expand=True, fill=True, padding=0)
         treeview = screen.current_view.treeview
         treeview.set_headers_visible(False)
+        for col in treeview.get_columns():
+            if col._type in {'selection', 'optional', 'drag'}:
+                col.set_visible(False)
 
         # Favorite column
         column = Gtk.TreeViewColumn()

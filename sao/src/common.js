@@ -1195,7 +1195,7 @@
         },
         stringable: function(domain) {
             const stringable_ = clause => {
-                if (!clause) {
+                if (!clause || jQuery.isEmptyObject(clause)) {
                     return true;
                 }
                 var is_array = function(e) {
@@ -3616,11 +3616,14 @@
                 this.el.appendTo('body');
             });
         },
-        show: function() {
+        show: function(timeout=null) {
+            if (timeout === null) {
+                timeout = this.timeout;
+            }
             return window.setTimeout(() => {
                 this.queries += 1;
                 this.el.show();
-            }, this.timeout);
+            }, timeout);
         },
         hide: function(timeoutID) {
             window.clearTimeout(timeoutID);

@@ -142,8 +142,22 @@ class ModelSQLSearchOR2Union(ModelSQL):
 
     @classmethod
     def order_integer(cls, tables):
+        pool = Pool()
+        Target = pool.get('test.modelsql.search.or2union.target')
+        target = Target.__table__()
+
         table, _ = tables[None]
-        return [table.integer + 1]
+        tables['target'] = {
+            None: (target, (target.id == table.target)),
+            }
+        return [table.integer + target.id]
+
+    @classmethod
+    def search_rec_name(cls, name, clause):
+        return ['OR',
+            ('name',) + clause[1:],
+            ('targets.name',) + clause[1:],
+            ]
 
 
 class ModelSQLSearchOR2UnionTarget(ModelSQL):

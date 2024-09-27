@@ -758,24 +758,6 @@ var Sao = {
                     });
                     menu.append(li);
                 });
-                menu.append(jQuery('<li/>', {
-                        'class': 'divider'
-                }));
-                jQuery('<li/>', {
-                    'role': 'presentation'
-                }).append(jQuery('<a/>', {
-                        'href': '#'
-                    }).click(function(evt) {
-                        evt.preventDefault();
-                        Sao.favorites_menu_clear();
-                        Sao.Tab.create({
-                            'model': Sao.main_menu_screen.model_name +
-                            '.favorite',
-                            'mode': ['tree', 'form'],
-                            'name': Sao.i18n.gettext('Favorites')
-                        });
-                    }).text(Sao.i18n.gettext('Manage...'))).appendTo(
-                       menu);
             });
         }
     };
@@ -1175,7 +1157,7 @@ var Sao = {
                 id: 'print',
             }, {
                 shortcut: 'ctrl+shift+e',
-                label: Sao.i18n.gettext('E-Mail'),
+                label: Sao.i18n.gettext('Email'),
                 id: 'email',
             }, {
                 shortcut: 'alt+shift+tab',

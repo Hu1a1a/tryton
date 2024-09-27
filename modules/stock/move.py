@@ -236,6 +236,8 @@ class Move(Workflow, ModelSQL, ModelView):
             'readonly': Eval('state') != 'draft',
             },
         help="The source of the stock move.")
+    outcome_moves = fields.One2Many(
+        'stock.move', 'origin', "Outcome Moves", readonly=True)
     origin_planned_date = fields.Date(
         "Origin Planned Date", readonly=True,
         help="When the stock was expected to be moved originally.")
@@ -282,6 +284,11 @@ class Move(Workflow, ModelSQL, ModelView):
             },
         help="The company the stock move is associated with.")
     unit_price = fields.Numeric('Unit Price', digits=price_digits,
+        domain=[
+            If(~Eval('unit_price_required'),
+                ('unit_price', '=', None),
+                ()),
+            ],
         states={
             'invisible': ~Eval('unit_price_required'),
             'required': Bool(Eval('unit_price_required')),
@@ -301,6 +308,11 @@ class Move(Workflow, ModelSQL, ModelView):
             })
     cost_price = fields.Numeric(
         "Cost Price", digits=price_digits, readonly=True,
+        domain=[
+            If(~Eval('cost_price_required'),
+                ('cost_price', '=', None),
+                ()),
+            ],
         states={
             'invisible': ~Eval('cost_price_required'),
             'required': (
@@ -309,12 +321,22 @@ class Move(Workflow, ModelSQL, ModelView):
             })
     product_cost_price = fields.Numeric(
         "Product Cost Price", digits=price_digits, readonly=True,
+        domain=[
+            If(~Eval('cost_price_required'),
+                ('product_cost_price', '=', None),
+                ()),
+            ],
         states={
-            'invisible': ~Eval('cost_price'),
+            'invisible': ~Eval('cost_price_required'),
             },
         help="The cost price of the product "
         "when different from the cost price of the move.")
     currency = fields.Many2One('currency.currency', 'Currency',
+        domain=[
+            If(~Eval('unit_price_required'),
+                ('id', '=', None),
+                ()),
+            ],
         states={
             'invisible': ~Eval('unit_price_required'),
             'required': Bool(Eval('unit_price_required')),
@@ -363,25 +385,28 @@ class Move(Workflow, ModelSQL, ModelView):
         cls._sql_indexes.update({
                 Index(
                     t,
+                    (t.company, Index.Equality()),
                     (t.from_location, Index.Range()),
-                    (t.product, Index.Range()),
                     (Coalesce(
                             t.effective_date,
                             t.planned_date,
                             datetime.date.max),
-                        Index.Range())),
+                        Index.Range()),
+                    (t.product, Index.Range())),
                 Index(
                     t,
+                    (t.company, Index.Equality()),
                     (t.to_location, Index.Range()),
-                    (t.product, Index.Range()),
                     (Coalesce(
                             t.effective_date,
                             t.planned_date,
                             datetime.date.max),
-                        Index.Range())),
+                        Index.Range()),
+                    (t.product, Index.Range())),
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.company, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['staging', 'draft', 'assigned'])),
                 })
         cls._order[0] = ('id', 'DESC')
@@ -692,6 +717,23 @@ class Move(Workflow, ModelSQL, ModelView):
             with Transaction().set_context(company=self.company.id):
                 self.effective_date = Date.today()
 
+        moves = [m for m in self.outcome_moves if m.state == 'done']
+        if (isinstance(self.origin, self.__class__)
+                and self.origin.state == 'done'):
+            moves.append(self.origin)
+        before_date = max(
+            (m.effective_date for m in moves
+                if m.to_location == self.from_location),
+            default=datetime.date.min)
+        if self.effective_date < before_date:
+            self.effective_date = before_date
+        after_date = min(
+            (m.effective_date for m in moves
+                if m.from_location == self.to_location),
+            default=datetime.date.max)
+        if self.effective_date > after_date:
+            self.effective_date = after_date
+
     @classmethod
     def view_attributes(cls):
         return super().view_attributes() + [
@@ -887,6 +929,12 @@ class Move(Workflow, ModelSQL, ModelView):
     @Workflow.transition('cancelled')
     def cancel(cls, moves):
         pass
+
+    @classmethod
+    def copy(cls, moves, default=None):
+        default = default.copy() if default is not None else {}
+        default.setdefault('outcome_moves', None)
+        return super().copy(moves, default=default)
 
     @classmethod
     def create(cls, vlist):
@@ -1528,7 +1576,10 @@ class Move(Workflow, ModelSQL, ModelView):
 
                 def state_date_clause():
                     return (
-                        Coalesce(move_date, datetime.date.max) > period.date)
+                        Coalesce(
+                            move.effective_date,
+                            move.planned_date,
+                            datetime.date.max) > period.date)
                 state_date_clause_in &= state_date_clause()
                 state_date_clause_out &= state_date_clause()
 
@@ -1600,15 +1651,14 @@ class Move(Workflow, ModelSQL, ModelView):
                 & dest_clause_to,
                 group_by=[move.from_location] + move_keys),
             all_=True)
-        if PeriodCache:
+        if PeriodCache and period:
             period_keys = [Column(period_cache, key).as_(key)
                 for key in grouping]
             query = Union(query, from_period.select(
                     period_cache.location.as_('location'),
                     period_cache.internal_quantity.as_('quantity'),
                     *period_keys,
-                    where=(period_cache.period
-                        == (period.id if period else None))
+                    where=(period_cache.period == period.id)
                     & where_period
                     & period_cache.location.in_(location_query)
                     & dest_clause_period),

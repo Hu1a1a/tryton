@@ -585,7 +585,7 @@ class PaymentBraintreeRefund(Workflow, ModelSQL, ModelView):
         cls._sql_indexes.add(
             Index(
                 t,
-                (t.state, Index.Equality()),
+                (t.state, Index.Equality(cardinality='low')),
                 where=t.state.in_([
                         'draft', 'submitted', 'approved', 'processing'])))
         cls.__access__.add('payment')
@@ -929,6 +929,7 @@ class PaymentBraintreeCustomer(
     "Braintree Customer"
     __name__ = 'account.payment.braintree.customer'
     _history = True
+    _rec_name = 'braintree_customer_id'
     party = fields.Many2One(
         'party.party', "Party", required=True,
         states={
@@ -973,6 +974,10 @@ class PaymentBraintreeCustomer(
                 'braintree_checkout': {
                     'invisible': Bool(Eval('braintree_nonce')),
                     'depends': ['braintree_nonce'],
+                    },
+                'braintree_update': {
+                    'invisible': ~Eval('braintree_customer_id'),
+                    'depends': ['braintree_customer_id'],
                     },
                 'delete_payment_method': {
                     'invisible': ~Eval('braintree_customer_id'),
@@ -1082,8 +1087,11 @@ class PaymentBraintreeCustomer(
         return params
 
     @classmethod
+    @ModelView.button
     def braintree_update(cls, customers):
         for customer in customers:
+            if not customer.braintree_customer_id:
+                continue
             gateway = customer.braintree_account.gateway()
             try:
                 gateway.customer.update(
@@ -1091,10 +1099,7 @@ class PaymentBraintreeCustomer(
                     customer._customer_parameters())
             except TooManyRequestsError as e:
                 logger.warning(str(e))
-            except Exception:
-                logger.error(
-                    "Error when updating customer %d", customer.id,
-                    exc_info=True)
+                raise
 
     @classmethod
     def braintree_delete(cls, customers=None):

@@ -773,7 +773,7 @@ class Refund(Workflow, ModelSQL, ModelView):
         cls._sql_indexes.add(
             Index(
                 t,
-                (t.state, Index.Equality()),
+                (t.state, Index.Equality(cardinality='low')),
                 where=t.state.in_([
                         'draft', 'submitted', 'approved', 'processing'])))
         cls.__access__.add('payment')
@@ -1396,6 +1396,7 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
     "Stripe Customer"
     __name__ = 'account.payment.stripe.customer'
     _history = True
+    _rec_name = 'stripe_customer_id'
     party = fields.Many2One('party.party', "Party", required=True,
         states={
             'readonly': Eval('stripe_customer_id') | Eval('stripe_token'),
@@ -1457,6 +1458,10 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
                 'stripe_checkout': {
                     'invisible': ~Eval('stripe_checkout_needed', False),
                     'depends': ['stripe_checkout_needed'],
+                    },
+                'stripe_update': {
+                    'invisible': ~Eval('stripe_customer_id'),
+                    'depends': ['stripe_customer_id'],
                     },
                 'detach_source': {
                     'invisible': ~Eval('stripe_customer_id'),
@@ -1571,8 +1576,11 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
             }
 
     @classmethod
+    @ModelView.button
     def stripe_update(cls, customers):
         for customer in customers:
+            if not customer.stripe_customer_id:
+                continue
             try:
                 stripe.Customer.modify(
                     customer.stripe_customer_id,
@@ -1583,14 +1591,7 @@ class Customer(CheckoutMixin, DeactivableMixin, ModelSQL, ModelView):
             except (stripe.error.RateLimitError,
                     stripe.error.APIConnectionError) as e:
                 logger.warning(str(e))
-            except Exception as e:
-                if (isinstance(e, stripe.error.StripeError)
-                        and e.code in RETRY_CODES):
-                    logger.warning(str(e))
-                else:
-                    logger.error(
-                        "Error when updating customer %d", customer.id,
-                        exc_info=True)
+                raise
 
     @classmethod
     def stripe_delete(cls, customers=None):

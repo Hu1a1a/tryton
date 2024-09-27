@@ -22,6 +22,7 @@ from trytond.pool import Pool
 from trytond.pyson import PYSONDecoder, PYSONEncoder
 from trytond.rpc import RPC
 from trytond.tools import cursor_dict, grouped_slice, reduce_ids
+from trytond.tools.domain_inversion import simplify
 from trytond.transaction import (
     Transaction, inactive_records, record_cache_size, without_check_access)
 
@@ -232,9 +233,11 @@ class Index:
             return self.expression.params
 
     class Usage:
-        __slots__ = ('options',)
+        __slots__ = ('options', 'cardinality')
 
-        def __init__(self, **options):
+        def __init__(self, cardinality='normal', **options):
+            assert cardinality in {'low', 'normal', 'high'}
+            self.cardinality = cardinality
             self.options = options
 
         def __hash__(self):
@@ -242,6 +245,7 @@ class Index:
 
         def __eq__(self, other):
             return (self.__class__ == other.__class__
+                and self.cardinality == other.cardinality
                 and self.options == other.options)
 
     class Equality(Usage):
@@ -261,6 +265,33 @@ def no_table_query(func):
             raise NotImplementedError("On table_query")
         return func(cls, *args, **kwargs)
     return wrapper
+
+
+def apply_sorting(keywords):
+    order_types = {
+        'DESC': Desc,
+        'ASC': Asc,
+        }
+    null_ordering_types = {
+        'NULLS FIRST': NullsFirst,
+        'NULLS LAST': NullsLast,
+        None: lambda _: _
+        }
+
+    if not keywords:
+        keywords = 'ASC'
+    keywords = keywords.upper()
+
+    try:
+        otype, null_ordering = keywords.split(' ', 1)
+    except ValueError:
+        otype = keywords
+        null_ordering = None
+
+    Order = order_types[otype]
+    NullOrdering = null_ordering_types[null_ordering]
+
+    return lambda col: NullOrdering(Order(col))
 
 
 class ModelSQL(ModelStorage):
@@ -324,55 +355,57 @@ class ModelSQL(ModelStorage):
                     })
 
     @classmethod
-    def __post_setup__(cls):
-        super().__post_setup__()
-
+    def __setup_indexes__(cls):
+        pool = Pool()
         # Define Range index to optimise with reduce_ids
-        for field in cls._fields.values():
-            field_names = set()
-            if isinstance(field, fields.One2Many):
-                Target = field.get_target()
-                if field.field:
-                    field_names.add(field.field)
-            elif isinstance(field, fields.Many2Many):
-                Target = field.get_relation()
-                if field.origin:
-                    field_names.add(field.origin)
-                if field.target:
-                    field_names.add(field.target)
-            else:
-                continue
-            field_names.discard('id')
-            for field_name in field_names:
-                target_field = getattr(Target, field_name)
-                if (issubclass(Target, ModelSQL)
-                        and not callable(Target.table_query)
-                        and not hasattr(target_field, 'set')):
-                    target = Target.__table__()
-                    column = Column(target, field_name)
-                    if not target_field.required and Target != cls:
-                        where = column != Null
-                    else:
-                        where = None
-                    if target_field._type == 'reference':
-                        Target._sql_indexes.update({
-                                Index(
-                                    target,
-                                    (column, Index.Equality()),
-                                    where=where),
-                                Index(
-                                    target,
-                                    (column, Index.Similarity(begin=True)),
-                                    (target_field.sql_id(column, Target),
-                                        Index.Range()),
-                                    where=where),
-                                })
-                    else:
-                        Target._sql_indexes.add(
+        for field_name, field in cls._fields.items():
+            Targets = []
+            if isinstance(field, fields.Many2One):
+                Targets = [field.get_target()]
+            elif isinstance(field, fields.Reference):
+                if isinstance(field.selection, (list, tuple)):
+                    for target, _ in field.selection:
+                        if target:
+                            Targets.append(pool.get(target))
+                else:
+                    Targets.extend(t for _, t in pool.iterobject())
+            for Target in Targets:
+                for tfield in Target._fields.values():
+                    if (isinstance(tfield, fields.One2Many)
+                            and tfield.get_target() == cls):
+                        break
+                    elif (isinstance(tfield, fields.Many2Many)
+                            and tfield.get_target() == cls
+                            and (tfield.origin == field_name
+                                or tfield.target == field_name)):
+                        break
+                else:
+                    continue
+                table = cls.__table__()
+                column = Column(table, field_name)
+                if not field.required and cls != Target:
+                    where = column != Null
+                else:
+                    where = None
+                if isinstance(field, fields.Reference):
+                    cls._sql_indexes.update({
                             Index(
-                                target,
-                                (column, Index.Range()),
-                                where=where))
+                                table,
+                                (column, Index.Equality()),
+                                where=where),
+                            Index(
+                                table,
+                                (column, Index.Similarity(begin=True)),
+                                (field.sql_id(column, Target), Index.Range()),
+                                where=where),
+                            })
+                else:
+                    cls._sql_indexes.add(
+                        Index(
+                            table,
+                            (column, Index.Range()),
+                            where=where))
+                    break
 
     @classmethod
     def __table__(cls):
@@ -1661,6 +1694,21 @@ class ModelSQL(ModelStorage):
         pool = Pool()
         Rule = pool.get('ir.rule')
 
+        def convert(domain):
+            if is_leaf(domain):
+                fname, *_ = domain[0].split('.', 1)
+                field = cls._fields[fname]
+                if isinstance(field, fields.Function) and field.searcher:
+                    new_leaf = getattr(cls, field.searcher)(fname, domain)
+                    return new_leaf
+                else:
+                    return domain
+            elif isinstance(domain, str):
+                return domain
+            else:
+                return [convert(d) for d in domain]
+
+        domain = simplify(convert(domain))
         rule_domain = Rule.domain_get(cls.__name__, mode='read')
         joined_domains = None
         if domain and domain[0] == 'OR':
@@ -1671,19 +1719,7 @@ class ModelSQL(ModelStorage):
                     local_domains.insert(0, 'OR')
                     joined_domains.append(local_domains)
 
-        def get_local_columns(order_exprs):
-            local_columns = []
-            for order_expr in order_exprs:
-                if (isinstance(order_expr, Column)
-                        and isinstance(order_expr._from, Table)
-                        and order_expr._from._name == cls._table):
-                    local_columns.append(order_expr._name)
-                else:
-                    raise NotImplementedError
-            return local_columns
-
         # The UNION optimization needs the columns used to order the query
-        extra_columns = set()
         if order and joined_domains:
             tables = {
                 None: (cls.__table__(), None),
@@ -1691,18 +1727,17 @@ class ModelSQL(ModelStorage):
             for oexpr, otype in order:
                 fname = oexpr.partition('.')[0]
                 field = cls._fields[fname]
-                field_orders = field.convert_order(oexpr, tables, cls)
-                try:
-                    order_columns = get_local_columns(field_orders)
-                    extra_columns.update(order_columns)
-                except NotImplementedError:
+                field.convert_order(oexpr, tables, cls)
+                if len(tables) > 1:
                     joined_domains = None
                     break
 
         # In case the search uses subqueries it's more efficient to use a UNION
         # of queries than using clauses with some JOIN because databases can
         # used indexes
+        orderings = []
         if joined_domains is not None:
+            done_orderings = False
             union_tables = []
             for sub_domain in joined_domains:
                 sub_domain = [sub_domain]  # it may be a clause
@@ -1713,9 +1748,22 @@ class ModelSQL(ModelStorage):
                     expression &= domain_exp
                 main_table, _ = tables[None]
                 table = convert_from(None, tables)
-                columns = cls.__searched_columns(main_table,
-                    eager=not count and not query,
-                    extra_columns=extra_columns)
+                columns = cls.__searched_columns(
+                    main_table, eager=not count and not query)
+
+                o_idx = 0
+                for oexpr, otype in order:
+                    column_name, _, extra_expr = oexpr.partition('.')
+                    field = cls._fields[column_name]
+                    # By construction tables is left untouched
+                    forder = field.convert_order(oexpr, tables, cls)
+                    columns.extend(o.as_(f'_order_{o_idx + idx}')
+                        for idx, o in enumerate(forder))
+                    o_idx += len(forder)
+                    if not done_orderings:
+                        orderings.extend([otype] * len(forder))
+                done_orderings = True
+
                 union_tables.append(table.select(
                         *columns, where=expression))
             expression = None
@@ -1729,30 +1777,21 @@ class ModelSQL(ModelStorage):
                     rule_domain, active_test=False, tables=tables)
                 expression &= domain_exp
 
-        return tables, expression
+        return tables, expression, orderings
 
     @classmethod
-    def __searched_columns(
-            cls, table, *, eager=False, history=False, extra_columns=None):
-        if extra_columns is None:
-            extra_columns = []
-        else:
-            extra_columns = sorted(extra_columns - {'id', '__id', '_datetime'})
+    def __searched_columns(cls, table, *, eager=False, history=False):
         columns = [table.id.as_('id')]
         if (cls._history and Transaction().context.get('_datetime')
                 and (eager or history)):
             columns.append(
                 Coalesce(table.write_date, table.create_date).as_('_datetime'))
             columns.append(Column(table, '__id').as_('__id'))
-        for column_name in extra_columns:
-            field = cls._fields[column_name]
-            sql_column = field.sql_column(table).as_(column_name)
-            columns.append(sql_column)
+
         if eager:
             columns += [f.sql_column(table).as_(n)
                 for n, f in sorted(cls._fields.items())
                 if not hasattr(f, 'get')
-                    and n not in extra_columns
                     and n != 'id'
                     and not getattr(f, 'translate', False)
                     and f.loading == 'eager']
@@ -1766,31 +1805,11 @@ class ModelSQL(ModelStorage):
     @classmethod
     def __search_order(cls, order, tables):
         order_by = []
-        order_types = {
-            'DESC': Desc,
-            'ASC': Asc,
-            }
-        null_ordering_types = {
-            'NULLS FIRST': NullsFirst,
-            'NULLS LAST': NullsLast,
-            None: lambda _: _
-            }
         for oexpr, otype in order:
             fname, _, extra_expr = oexpr.partition('.')
             field = cls._fields[fname]
-            if not otype:
-                otype, null_ordering = 'ASC', None
-            else:
-                otype = otype.upper()
-                try:
-                    otype, null_ordering = otype.split(' ', 1)
-                except ValueError:
-                    null_ordering = None
-            Order = order_types[otype]
-            NullOrdering = null_ordering_types[null_ordering]
             forder = field.convert_order(oexpr, tables, cls)
-            order_by.extend((NullOrdering(Order(o)) for o in forder))
-
+            order_by.extend(apply_sorting(otype)(o) for o in forder)
         return order_by
 
     @classmethod
@@ -1804,7 +1823,8 @@ class ModelSQL(ModelStorage):
 
         if order is None or order is False:
             order = cls._order
-        tables, expression = cls.__search_query(domain, count, query, order)
+        tables, expression, union_orderings = cls.__search_query(
+            domain, count, query, order)
 
         main_table, _ = tables[None]
         if count:
@@ -1821,7 +1841,18 @@ class ModelSQL(ModelStorage):
                 cursor.execute(*select)
                 return cursor.fetchone()[0]
 
-        order_by = cls.__search_order(order, tables)
+        if union_orderings:
+            # union_orderings is not empty only when the OR-to-UNION
+            # optimization has been applied. In this case we must rely on the
+            # _order_XXX columns that were added to the subqueries to properly
+            # sort the results.
+            order_by = []
+            for idx, otype in enumerate(union_orderings):
+                column = getattr(main_table, f'_order_{idx}')
+                order_by.append(apply_sorting(otype)(column))
+        else:
+            order_by = cls.__search_order(order, tables)
+
         # compute it here because __search_order might modify tables
         table = convert_from(None, tables)
         if query:
@@ -2042,6 +2073,12 @@ class ModelSQL(ModelStorage):
 
     @classmethod
     def _update_mptt(cls, field_names, list_ids, values=None):
+        # The threshold is based on comparing the cost of each method using a
+        # cost of 1 for a select query, a cost of x for a query update x rows
+        # and _update_tree update half of the rows on average.
+        # With n = len(ids) and C = cls.estimated_count(), the costs are:
+        # - _update_tree: n (2 + 2 * n / 2) -> 2n (1 + n / 2)
+        # - _rebuild_tree: 2 * C
         for field_name, ids in zip(field_names, list_ids):
             field = cls._fields[field_name]
             if (values is not None
@@ -2050,7 +2087,7 @@ class ModelSQL(ModelStorage):
                     'You can not update fields: "%s", "%s"' %
                     (field.left, field.right))
 
-            if len(ids) < max(cls.estimated_count() / 4, 4):
+            if len(ids) * (1 + len(ids) / 2) < cls.estimated_count():
                 for id_ in ids:
                     cls._update_tree(id_, field_name,
                         field.left, field.right)

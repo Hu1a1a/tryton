@@ -966,7 +966,10 @@ class ProductQuantitiesByWarehouseMove(ModelSQL, ModelView):
         warehouse = With('id', query=Location.search([
                     ('parent', 'child_of', [location_id]),
                     ], query=True, order=[]))
-        date_column = Coalesce(move.effective_date, move.planned_date)
+        date_column = Coalesce(
+            move.effective_date,
+            Case((move.state == 'assigned', today), else_=Null),
+            move.planned_date)
         quantity = Case(
             (move.to_location.in_(warehouse.select(warehouse.id)),
                 move.internal_quantity),
@@ -1287,9 +1290,9 @@ class CostPriceRevision(ModelSQL, ModifyCostPriceStart):
         cls._sql_indexes.add(
             Index(
                 t,
-                (t.product, Index.Equality()),
-                (t.template, Index.Equality()),
-                (t.company, Index.Equality())))
+                (t.product, Index.Range()),
+                (t.template, Index.Range()),
+                (t.company, Index.Range())))
         cls._order.insert(0, ('date', 'DESC'))
 
     @classmethod

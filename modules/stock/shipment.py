@@ -94,12 +94,16 @@ class ShipmentMixin:
         Config = pool.get('stock.configuration')
 
         config = Config(1)
-        sequence = cls.__name__[len('stock.'):].replace('.', '_')
-        for shipment in shipments:
-            if not shipment.number:
-                shipment.number = config.get_multivalue(
-                    sequence + '_sequence',
-                    company=shipment.company.id).get()
+        sequence_name = cls.__name__[len('stock.'):].replace('.', '_')
+        for company, c_shipments in groupby(
+                shipments, key=lambda s: s.company):
+            c_shipments = [s for s in c_shipments if not s.number]
+            if c_shipments:
+                sequence = config.get_multivalue(
+                    sequence_name + '_sequence', company=company.id)
+                for shipment, number in zip(
+                        c_shipments, sequence.get_many(len(c_shipments))):
+                    shipment.number = number
         cls.save(shipments)
 
     def get_delay(self, name):
@@ -142,6 +146,7 @@ class ShipmentMixin:
     def copy(cls, shipments, default=None):
         default = default.copy() if default is not None else {}
         default.setdefault('number')
+        default.setdefault('moves.origin', None)
         return super().copy(shipments, default=default)
 
 
@@ -451,7 +456,7 @@ class ShipmentIn(
         cls._sql_indexes.update({
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['draft', 'received'])),
                 })
         cls._order = [
@@ -856,7 +861,7 @@ class ShipmentInReturn(ShipmentAssignMixin, Workflow, ModelSQL, ModelView):
         cls._sql_indexes.update({
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['draft', 'waiting', 'assigned'])),
                 })
         cls._order = [
@@ -1275,7 +1280,7 @@ class ShipmentOut(
         cls._sql_indexes.update({
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_([
                             'draft', 'waiting', 'assigned',
                             'picked', 'packed', 'shipped'])),
@@ -1981,7 +1986,7 @@ class ShipmentOutReturn(
         cls._sql_indexes.update({
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['draft', 'received'])),
                 })
         cls._transitions |= set((
@@ -2460,7 +2465,7 @@ class ShipmentInternal(
         cls._sql_indexes.update({
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_([
                             'request', 'draft', 'waiting',
                             'assigned', 'shipped'])),

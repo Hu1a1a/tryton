@@ -66,7 +66,7 @@ class Line(metaclass=PoolMeta):
         default.setdefault('productions', None)
         return super().copy(lines, default=default)
 
-    def get_production(self, product_quantities):
+    def get_production(self, product_quantities, bom_pattern=None):
         "Return production for the sale line"
         pool = Pool()
         Production = pool.get('production')
@@ -99,15 +99,28 @@ class Line(metaclass=PoolMeta):
             date = today
         else:
             date -= dt.timedelta(1)
+        pbom = product.get_bom(bom_pattern)
         return Production(
             planned_date=date,
             company=self.sale.company,
             warehouse=self.warehouse,
             location=self.warehouse.production_location,
             product=product,
-            bom=product.boms[0].bom if product.boms else None,
+            bom=pbom.bom if pbom else None,
             unit=self.unit,
             quantity=quantity,
             state='request',
             origin=self,
             )
+
+
+class Line_Routing(metaclass=PoolMeta):
+    __name__ = 'sale.line'
+
+    def get_production(self, product_quantities, bom_pattern=None):
+        production = super().get_production(
+            product_quantities, bom_pattern=bom_pattern)
+        if production and production.product:
+            if pbom := production.product.get_bom(bom_pattern):
+                production.routing = pbom.routing
+        return production
