@@ -2,6 +2,7 @@
 # this repository contains the full copyright notices and license terms.
 from collections import defaultdict
 from decimal import Decimal
+from itertools import groupby
 
 from sql import Literal, Null, Union
 from sql.aggregate import Sum
@@ -170,7 +171,7 @@ class POSSale(Workflow, ModelSQL, ModelView, TaxableMixin):
         t = cls.__table__()
         cls._sql_indexes.add(
             Index(
-                t, (t.state, Index.Equality()),
+                t, (t.state, Index.Equality(cardinality='low')),
                 where=t.state.in_(['open', 'done'])))
         cls._transitions |= {
             ('open', 'done'),
@@ -325,9 +326,13 @@ class POSSale(Workflow, ModelSQL, ModelView, TaxableMixin):
     @classmethod
     @Workflow.transition('done')
     def do(cls, sales):
-        for sale in sales:
-            with Transaction().set_context(company=sale.company.id):
-                sale.number = sale.point.sequence.get()
+        for (company, sequence), c_sales in groupby(
+                sales, key=lambda s: (s.company, s.point.sequence)):
+            c_sales = list(c_sales)
+            with Transaction().set_context(company=company.id):
+                for sale, number in zip(
+                        c_sales, sequence.get_many(len(c_sales))):
+                    sale.number = number
         cls.save(sales)
 
     @classmethod
@@ -787,7 +792,10 @@ class POSCashSession(Workflow, ModelSQL, ModelView):
                 'sale_point.msg_cash_session_previous_unique'),
             ]
         cls._sql_indexes.add(
-            Index(t, (t.state, Index.Equality()), where=t.state == 'open'))
+            Index(
+                t,
+                (t.state, Index.Equality(cardinality='low')),
+                where=t.state == 'open'))
         cls._transitions |= {
             ('open', 'closed'),
             ('closed', 'open'),
@@ -1232,7 +1240,10 @@ class POSCashTransfer(Workflow, ModelSQL, ModelView):
         super().__setup__()
         t = cls.__table__()
         cls._sql_indexes.add(
-            Index(t, (t.state, Index.Equality()), where=t.state == 'draft'))
+            Index(
+                t,
+                (t.state, Index.Equality(cardinality='low')),
+                where=t.state == 'draft'))
         cls._transitions |= {
             ('draft', 'posted'),
             }

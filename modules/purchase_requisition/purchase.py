@@ -136,7 +136,7 @@ class PurchaseRequisition(Workflow, ModelSQL, ModelView):
         cls._sql_indexes.add(
             Index(
                 t,
-                (t.state, Index.Equality()),
+                (t.state, Index.Equality(cardinality='low')),
                 where=t.state.in_([
                         'draft', 'waiting', 'approved', 'processing'])))
         cls._transitions |= set((
@@ -259,11 +259,14 @@ class PurchaseRequisition(Workflow, ModelSQL, ModelView):
     def get_amount(cls, requisitions, name):
         total_amount = {}
 
-        # Sort cached first and re-instantiate to optimize cache management
-        requisitions = sorted(requisitions,
-            key=lambda r: r.state in cls._states_cached, reverse=True)
-        requisitions = cls.browse(requisitions)
+        # Browse separately not cached to limit number of lines read
+        cached, not_cached = [], []
         for requisition in requisitions:
+            if requisition.state in cls._states_cached:
+                cached.append(requisition)
+            else:
+                not_cached.append(requisition)
+        for requisition in chain(cached, cls.browse(not_cached)):
             if (requisition.state in cls._states_cached
                     and requisition.total_amount_cache is not None):
                 total_amount[requisition.id] = requisition.total_amount_cache
@@ -352,8 +355,6 @@ class PurchaseRequisition(Workflow, ModelSQL, ModelView):
     @reset_employee('approved_by', 'rejected_by')
     def draft(cls, requisitions):
         cls.write(requisitions, {
-                'tax_amount_cache': None,
-                'untaxed_amount_cache': None,
                 'total_amount_cache': None,
                 })
 
@@ -449,7 +450,9 @@ class PurchaseRequisitionLine(sequence_ordered(), ModelSQL, ModelView):
             help="The category of Unit of Measure for the product."),
         'on_change_with_product_uom_category')
     description = fields.Text("Description", states=_states)
-    summary = fields.Function(fields.Char('Summary'), 'on_change_with_summary')
+    summary = fields.Function(
+        fields.Char('Summary'), 'on_change_with_summary',
+        searcher='search_summary')
     quantity = fields.Float(
         "Quantity", digits='unit', required=True, states=_states)
     unit = fields.Many2One(
@@ -519,6 +522,10 @@ class PurchaseRequisitionLine(sequence_ordered(), ModelSQL, ModelView):
     @fields.depends('description')
     def on_change_with_summary(self, name=None):
         return firstline(self.description or '')
+
+    @classmethod
+    def search_summary(cls, name, clause):
+        return [('description', *clause[1:])]
 
     @fields.depends(
         'quantity', 'unit_price',

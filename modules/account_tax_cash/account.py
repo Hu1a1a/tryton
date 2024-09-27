@@ -4,9 +4,11 @@ from collections import defaultdict
 from itertools import groupby
 
 from sql import Literal, Null
+from sql.operators import Equal
 
 from trytond.i18n import gettext
-from trytond.model import ModelSQL, ModelView, Workflow, dualmethod, fields
+from trytond.model import (
+    Exclude, ModelSQL, ModelView, Workflow, dualmethod, fields)
 from trytond.pool import Pool, PoolMeta
 from trytond.pyson import Eval
 from trytond.tools import sortable_values
@@ -134,6 +136,24 @@ class TaxLine(metaclass=PoolMeta):
             })
 
     @classmethod
+    def __setup__(cls):
+        super().__setup__()
+
+        t = cls.__table__()
+        cls._sql_constraints = [
+            ('tax_type_move_line_cash_basis_no_period',
+                Exclude(
+                    t,
+                    (t.tax, Equal),
+                    (t.type, Equal),
+                    (t.move_line, Equal),
+                    where=(t.on_cash_basis == Literal(True))
+                    & (t.period == Null)),
+                'account_tax_cash.'
+                'msg_tax_type_move_line_cash_basis_no_period_unique'),
+            ]
+
+    @classmethod
     def default_on_cash_basis(cls):
         return False
 
@@ -169,23 +189,23 @@ class TaxLine(metaclass=PoolMeta):
             line_no_periods = [l for l in lines if not l.period]
             if line_no_periods:
                 line_no_period, = line_no_periods
-                to_save.append(line_no_period)
             else:
                 line_no_period = None
             total = sum(l.amount for l in lines)
-            amount = company.currency.round(total * ratio)
-            if line_no_period and line_no_period.amount == amount:
-                line_no_period.period = period
-            else:
-                line = cls(**key)
-                if line_no_period:
-                    line.amount = amount - total + line_no_period.amount
-                    line_no_period.amount -= line.amount
+            amount = total * ratio - sum(l.amount for l in lines if l.period)
+            amount = company.currency.round(amount)
+            if amount:
+                if line_no_period and line_no_period.amount == amount:
+                    line_no_period.period = period
                 else:
-                    line.amount = amount - total
-                line.period = period
-                if line.amount:
-                    to_save.append(line)
+                    line = cls(**key, amount=amount)
+                    if line_no_period:
+                        line_no_period.amount -= line.amount
+                    line.period = period
+                    if line.amount:
+                        to_save.append(line)
+                if line_no_period:
+                    to_save.append(line_no_period)
         cls.save(to_save)
 
 
@@ -272,7 +292,7 @@ class Invoice(metaclass=PoolMeta):
         for records, values in zip(actions, actions):
             if 'payment_lines' in values:
                 invoices.extend(records)
-        invoices = cls.browse(sum(args[0:None:2], []))
+        invoices = cls.browse(invoices)
         cls._update_tax_cash_basis(invoices)
 
     @classmethod

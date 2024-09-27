@@ -12,7 +12,7 @@ from trytond.model import (
     MatchMixin, ModelSQL, ModelView, fields, sequence_ordered)
 from trytond.pool import Pool, PoolMeta
 from trytond.protocols.wrappers import HTTPStatus
-from trytond.pyson import Eval
+from trytond.pyson import Eval, If
 
 from .exceptions import SendcloudCredentialWarning, SendcloudError
 
@@ -97,8 +97,11 @@ class CredentialSendcloud(sequence_ordered(), ModelSQL, ModelView, MatchMixin):
         self._addresses_sender_cache.set(self.id, addresses)
         return addresses
 
-    def get_sender_address(self, shipment):
-        pattern = self._get_sender_address_pattern(shipment)
+    def get_sender_address(self, shipment_or_warehouse):
+        if shipment_or_warehouse.__name__ == 'stock.location':
+            pattern = {'warehouse': shipment_or_warehouse.id}
+        else:
+            pattern = self._get_sender_address_pattern(shipment_or_warehouse)
         for address in self.addresses:
             if address.match(pattern):
                 return int(address.address) if address.address else None
@@ -131,8 +134,8 @@ class CredentialSendcloud(sequence_ordered(), ModelSQL, ModelView, MatchMixin):
         self._shiping_methods_cache.set(key, methods)
         return methods
 
-    def get_shipping_method(self, shipment):
-        pattern = self._get_shipping_method_pattern(shipment)
+    def get_shipping_method(self, shipment, package=None):
+        pattern = self._get_shipping_method_pattern(shipment, package=package)
         for method in self.shipping_methods:
             if method.match(pattern):
                 if method.shipping_method:
@@ -141,9 +144,21 @@ class CredentialSendcloud(sequence_ordered(), ModelSQL, ModelView, MatchMixin):
                     return None
 
     @classmethod
-    def _get_shipping_method_pattern(cls, shipment):
+    def _get_shipping_method_pattern(cls, shipment, package=None):
+        pool = Pool()
+        UoM = pool.get('product.uom')
+        ModelData = pool.get('ir.model.data')
+        kg = UoM(ModelData.get_id('product', 'uom_kilogram'))
+
+        if package:
+            weight = UoM.compute_qty(
+                package.weight_uom, package.total_weight, kg, round=False)
+        else:
+            weight = UoM.compute_qty(
+                shipment.weight_uom, shipment.weight, kg, round=False)
         return {
             'carrier': shipment.carrier.id if shipment.carrier else None,
+            'weight': weight,
             }
 
     @sendcloud_api
@@ -239,19 +254,63 @@ class SendcloudShippingMethod(
         domain=[
             ('shipping_service', '=', 'sendcloud'),
             ])
+    warehouse = fields.Many2One(
+        'stock.location', "Warehouse",
+        domain=[
+            ('type', '=', 'warehouse'),
+            ])
+    min_weight = fields.Float(
+        "Minimal Weight",
+        domain=[
+            ['OR',
+                ('min_weight', '=', None),
+                ('min_weight', '>', 0),
+                ],
+            If(Eval('max_weight', 0),
+                ('min_weight', '<=', Eval('max_weight', 0)),
+                ()),
+            ],
+        help="Minimal weight included in kg.")
+    max_weight = fields.Float(
+        "Maximal Weight",
+        domain=[
+            ['OR',
+                ('max_weight', '=', None),
+                ('max_weight', '>', 0),
+                ],
+            If(Eval('min_weight', 0),
+                ('max_weight', '>=', Eval('min_weight', 0)),
+                ()),
+            ],
+        help="Maximal weight included in kg.")
     shipping_method = fields.Selection(
         'get_shipping_methods', "Shipping Method")
 
-    @fields.depends('sendcloud', '_parent_sendcloud.id')
+    @fields.depends('sendcloud', 'warehouse', '_parent_sendcloud.id')
     def get_shipping_methods(self):
         methods = [(None, '')]
         if (self.sendcloud
                 and self.sendcloud.id is not None
                 and self.sendcloud.id >= 0):
+            if self.warehouse:
+                sender_address = self.sendcloud.get_sender_address(
+                    self.warehouse)
+            else:
+                sender_address = None
             methods += [
                 (str(m['id']), m['name'])
-                for m in self.sendcloud.get_shipping_methods()]
+                for m in self.sendcloud.get_shipping_methods(
+                    sender_address=sender_address)]
         return methods
+
+    def match(self, pattern, match_none=False):
+        pattern = pattern.copy()
+        if (weight := pattern.pop('weight')) is not None:
+            min_weight = self.min_weight or 0
+            max_weight = self.max_weight or weight
+            if not (min_weight <= weight <= max_weight):
+                return False
+        return super().match(pattern, match_none=match_none)
 
 
 class Carrier(metaclass=PoolMeta):

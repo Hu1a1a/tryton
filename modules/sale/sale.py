@@ -26,7 +26,7 @@ from trytond.modules.company.model import (
 from trytond.modules.currency.fields import Monetary
 from trytond.modules.product import price_digits
 from trytond.pool import Pool
-from trytond.pyson import Bool, Eval, If, PYSONEncoder
+from trytond.pyson import Bool, Eval, If
 from trytond.tools import cached_property, firstline, sortable_values
 from trytond.transaction import Transaction
 from trytond.wizard import (
@@ -37,12 +37,16 @@ from .exceptions import (
     SaleValidationError)
 
 
+def samesign(a, b):
+    return math.copysign(a, b) == a
+
+
 def get_shipments_returns(model_name):
     "Computes the returns or shipments"
     def method(self, name):
         Model = Pool().get(model_name)
         shipments = set()
-        for line in self.lines:
+        for line in self.line_lines:
             for move in line.moves:
                 if isinstance(move.shipment, Model):
                     shipments.add(move.shipment.id)
@@ -181,6 +185,11 @@ class Sale(
             'readonly': Eval('state') != 'draft',
             },
         depends={'party'})
+    line_lines = fields.One2Many(
+        'sale.line', 'sale', "Line - Lines", readonly=True,
+        filter=[
+            ('type', '=', 'line'),
+            ])
     comment = fields.Text('Comment')
     untaxed_amount = fields.Function(Monetary(
             "Untaxed", digits='currency', currency='currency'), 'get_amount')
@@ -292,20 +301,20 @@ class Sale(
         t = cls.__table__()
         cls._sql_indexes.update({
                 Index(t, (t.reference, Index.Similarity())),
-                Index(t, (t.party, Index.Equality())),
+                Index(t, (t.party, Index.Range())),
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_([
                             'draft', 'quotation', 'confirmed', 'processing'])),
                 Index(
                     t,
-                    (t.invoice_state, Index.Equality()),
+                    (t.invoice_state, Index.Equality(cardinality='low')),
                     where=t.invoice_state.in_([
                             'none', 'waiting', 'exception'])),
                 Index(
                     t,
-                    (t.shipment_state, Index.Equality()),
+                    (t.shipment_state, Index.Equality(cardinality='low')),
                     where=t.shipment_state.in_([
                             'none', 'waiting', 'exception'])),
                 })
@@ -582,11 +591,14 @@ class Sale(
             compute_taxes = True
         else:
             compute_taxes = False
-        # Sort cached first and re-instanciate to optimize cache management
-        sales = sorted(sales, key=lambda s: s.state in cls._states_cached,
-            reverse=True)
-        sales = cls.browse(sales)
+        # Browse separately not cached to limit number of lines read
+        cached, not_cached = [], []
         for sale in sales:
+            if sale.state in cls._states_cached:
+                cached.append(sale)
+            else:
+                not_cached.append(sale)
+        for sale in chain(cached, cls.browse(not_cached)):
             if (sale.state in cls._states_cached
                     and sale.untaxed_amount_cache is not None
                     and sale.tax_amount_cache is not None
@@ -597,8 +609,7 @@ class Sale(
                     total_amount[sale.id] = sale.total_amount_cache
             else:
                 untaxed_amount[sale.id] = sum(
-                    (line.amount for line in sale.lines
-                        if line.type == 'line'), Decimal(0))
+                    (line.amount for line in sale.line_lines), Decimal(0))
                 if compute_taxes:
                     tax_amount[sale.id] = sale.get_tax_amount()
                     total_amount[sale.id] = (
@@ -616,7 +627,7 @@ class Sale(
 
     def get_invoices(self, name):
         invoices = set()
-        for line in self.lines:
+        for line in self.line_lines:
             for invoice_line in line.invoice_lines:
                 if invoice_line.invoice:
                     invoices.add(invoice_line.invoice.id)
@@ -624,8 +635,13 @@ class Sale(
 
     @classmethod
     def search_invoices(cls, name, clause):
-        return [('lines.invoice_lines.invoice' + clause[0][len(name):],
-                *clause[1:])]
+        return [
+            ('lines', 'where', [
+                    ('invoice_lines.invoice' + clause[0][len(name):],
+                        *clause[1:]),
+                    ('type', '=', 'line'),
+                    ]),
+            ]
 
     @property
     def _invoices_for_state(self):
@@ -670,24 +686,29 @@ class Sale(
         '''
         Return the shipment state for the sale.
         '''
-        if any(l.moves_exception for l in self.lines):
+        if any(l.moves_exception for l in self.line_lines):
             return 'exception'
         elif any(m.state != 'cancelled' for m in self.moves):
-            if all(l.moves_progress >= 1.0 for l in self.lines
+            if all(l.moves_progress >= 1.0 for l in self.line_lines
                     if l.moves_progress is not None):
                 return 'sent'
-            elif any(l.moves_progress for l in self.lines):
+            elif any(l.moves_progress for l in self.line_lines):
                 return 'partially shipped'
             else:
                 return 'waiting'
         return 'none'
 
     def get_moves(self, name):
-        return [m.id for l in self.lines for m in l.moves]
+        return [m.id for l in self.line_lines for m in l.moves]
 
     @classmethod
     def search_moves(cls, name, clause):
-        return [('lines.' + clause[0],) + tuple(clause[1:])]
+        return [
+            ('lines', 'where', [
+                    clause,
+                    ('type', '=', 'line'),
+                    ]),
+            ]
 
     @classmethod
     def _get_origin(cls):
@@ -820,7 +841,7 @@ class Sale(
             raise SaleQuotationError(
                 gettext('sale.msg_sale_invoice_address_required_for_quotation',
                     sale=self.rec_name))
-        for line in self.lines:
+        for line in self.line_lines:
             if (line.product
                     and line.product.type != 'service'
                     and line.quantity >= 0
@@ -849,11 +870,14 @@ class Sale(
         Config = pool.get('sale.configuration')
 
         config = Config(1)
-        for sale in sales:
-            if sale.number:
-                continue
-            sale.number = config.get_multivalue(
-                'sale_sequence', company=sale.company.id).get()
+        for company, c_sales in groupby(sales, key=lambda s: s.company):
+            c_sales = [s for s in c_sales if not s.number]
+            if c_sales:
+                sequence = config.get_multivalue(
+                    'sale_sequence', company=company.id)
+                for sale, number in zip(
+                        c_sales, sequence.get_many(len(c_sales))):
+                    sale.number = number
         cls.save(sales)
 
     @classmethod
@@ -956,7 +980,7 @@ class Sale(
 
     def _get_shipment_moves(self, shipment_type):
         moves = {}
-        for line in self.lines:
+        for line in self.line_lines:
             move = line.get_move(shipment_type)
             if move:
                 moves[line] = move
@@ -997,13 +1021,13 @@ class Sale(
                 or (self.invoice_state == 'none'
                     and all(
                         l.invoice_progress >= 1
-                        for l in self.lines
+                        for l in self.line_lines
                         if l.invoice_progress is not None)))
             and (self.shipment_state == 'sent'
                 or (self.shipment_state == 'none'
                     and all(
                         l.moves_progress >= 1
-                        for l in self.lines
+                        for l in self.line_lines
                         if l.moves_progress is not None))))
 
     @classmethod
@@ -1154,7 +1178,7 @@ class Sale(
             if sale.shipment_state != shipment_state:
                 shipment_states[shipment_state].append(sale)
 
-            for line in sale.lines:
+            for line in sale.line_lines:
                 line.set_actual_quantity()
                 lines.append(line)
 
@@ -1359,7 +1383,9 @@ class SaleLine(TaxableMixin, sequence_ordered(), ModelSQL, ModelView):
             'readonly': Eval('sale_state') != 'draft',
             },
         depends=['sale_state'])
-    summary = fields.Function(fields.Char('Summary'), 'on_change_with_summary')
+    summary = fields.Function(
+        fields.Char('Summary'), 'on_change_with_summary',
+        searcher='search_summary')
     note = fields.Text('Note')
     taxes = fields.Many2Many('sale.line-account.tax', 'line', 'tax', 'Taxes',
         order=[('tax.sequence', 'ASC'), ('tax.id', 'ASC')],
@@ -1708,6 +1734,10 @@ class SaleLine(TaxableMixin, sequence_ordered(), ModelSQL, ModelView):
     def on_change_with_summary(self, name=None):
         return firstline(self.description or '')
 
+    @classmethod
+    def search_summary(cls, name, clause):
+        return [('description', *clause[1:])]
+
     @fields.depends(
         'type', 'quantity', 'unit_price',
         'sale', '_parent_sale.currency')
@@ -1892,7 +1922,8 @@ class SaleLine(TaxableMixin, sequence_ordered(), ModelSQL, ModelView):
                 raise AccountError(
                     gettext('sale.msg_sale_missing_account_revenue',
                         sale=self.sale.rec_name))
-        invoice_line.stock_moves = self._get_invoice_line_moves()
+        if samesign(self.quantity, invoice_line.quantity):
+            invoice_line.stock_moves = self._get_invoice_line_moves()
         return [invoice_line]
 
     def _get_invoice_line_quantity(self):
@@ -2059,7 +2090,8 @@ class SaleLine(TaxableMixin, sequence_ordered(), ModelSQL, ModelView):
                         and invoice_line.invoice.state == 'paid'):
                     if invoice_line.moved_quantity < invoice_line.quantity:
                         invoice_lines.append(invoice_line)
-        return invoice_lines
+        return list(filter(
+                lambda l: samesign(self.quantity, l.quantity), invoice_lines))
 
     def set_actual_quantity(self):
         pool = Pool()
@@ -2238,38 +2270,23 @@ class SaleReport(CompanyReport):
         return context
 
 
-class OpenCustomer(Wizard):
-    'Open Customers'
-    __name__ = 'sale.open_customer'
-    start_state = 'open_'
-    open_ = StateAction('party.act_party_form')
-
-    def do_open_(self, action):
-        pool = Pool()
-        ModelData = pool.get('ir.model.data')
-        Wizard = pool.get('ir.action.wizard')
-        Sale = pool.get('sale.sale')
-        cursor = Transaction().connection.cursor()
-        sale = Sale.__table__()
-
-        cursor.execute(*sale.select(sale.party, group_by=sale.party))
-        customer_ids = [line[0] for line in cursor]
-        action['pyson_domain'] = PYSONEncoder().encode(
-            [('id', 'in', customer_ids)])
-        wizard = Wizard(ModelData.get_id('sale', 'act_open_customer'))
-        action['name'] = wizard.name
-        return action, {}
-
-    def transition_open_(self):
-        return 'end'
-
-
 class HandleShipmentExceptionAsk(ModelView):
     'Handle Shipment Exception'
     __name__ = 'sale.handle.shipment.exception.ask'
     recreate_moves = fields.Many2Many(
-        'stock.move', None, None, 'Recreate Stock Moves',
-        domain=[('id', 'in', Eval('domain_moves'))])
+        'stock.move', None, None, "Stock Moves to Recreate",
+        domain=[
+            ('id', 'in', Eval('domain_moves', [])),
+            ('id', 'not in', Eval('ignore_moves', [])),
+            ],
+        help="The selected cancelled stock moves will be recreated.")
+    ignore_moves = fields.Many2Many(
+        'stock.move', None, None, "Stock Moves to Ignore",
+        domain=[
+            ('id', 'in', Eval('domain_moves', [])),
+            ('id', 'not in', Eval('recreate_moves', [])),
+            ],
+        help="The selected cancelled stock moves will be ignored.")
     domain_moves = fields.Many2Many(
         'stock.move', None, None, 'Domain Stock Moves')
 
@@ -2294,7 +2311,6 @@ class HandleShipmentException(Wizard):
                 if move.state == 'cancelled' and move not in skips:
                     moves.append(move.id)
         return {
-            'recreate_moves': moves,
             'domain_moves': moves,
             }
 
@@ -2312,7 +2328,7 @@ class HandleShipmentException(Wizard):
                     continue
                 if move in self.ask.recreate_moves:
                     moves_recreated.append(move.id)
-                else:
+                elif move in self.ask.ignore_moves:
                     moves_ignored.append(move.id)
 
             SaleLine.write([line], {
@@ -2327,10 +2343,19 @@ class HandleInvoiceExceptionAsk(ModelView):
     'Handle Invoice Exception'
     __name__ = 'sale.handle.invoice.exception.ask'
     recreate_invoices = fields.Many2Many(
-        'account.invoice', None, None, 'Recreate Invoices',
-        domain=[('id', 'in', Eval('domain_invoices'))],
-        help='The selected invoices will be recreated. '
-        'The other ones will be ignored.')
+        'account.invoice', None, None, "Invoices to Recreate",
+        domain=[
+            ('id', 'in', Eval('domain_invoices', [])),
+            ('id', 'not in', Eval('ignore_invoices', []))
+            ],
+        help="The selected cancelled invoices will be recreated.")
+    ignore_invoices = fields.Many2Many(
+        'account.invoice', None, None, "Invoices to Ignore",
+        domain=[
+            ('id', 'in', Eval('domain_invoices', [])),
+            ('id', 'not in', Eval('recreate_invoices', []))
+            ],
+        help="The selected cancelled invoices will be ignored")
     domain_invoices = fields.Many2Many(
         'account.invoice', None, None, 'Domain Invoices')
 
@@ -2354,7 +2379,6 @@ class HandleInvoiceException(Wizard):
             if invoice.state == 'cancelled' and invoice not in skips:
                 invoices.append(invoice.id)
         return {
-            'recreate_invoices': invoices,
             'domain_invoices': invoices,
             }
 
@@ -2364,7 +2388,7 @@ class HandleInvoiceException(Wizard):
         for invoice in self.ask.domain_invoices:
             if invoice in self.ask.recreate_invoices:
                 invoices_recreated.append(invoice.id)
-            else:
+            elif invoice in self.ask.ignore_invoices:
                 invoices_ignored.append(invoice.id)
 
         self.model.write([self.record], {

@@ -504,13 +504,14 @@
             this.selected_records.forEach((record) => {
                 var values = [];
                 this.columns.forEach((col) => {
-                    if (!col.get_visible() || !col.attributes.name) {
+                    if (!col.get_visible() || !col.attributes.name ||
+                        col instanceof Sao.View.Tree.ButtonColumn) {
                         return;
                     }
                     var text;
                     if (!record.is_loaded(col.attributes.name)) {
                         try {
-                            record.load(this.attributes.name, false, false);
+                            record.load(col.attributes.name, false, false);
                             text = col.get_textual_value(record);
                         } catch (e) {
                             Sao.Logger.error(

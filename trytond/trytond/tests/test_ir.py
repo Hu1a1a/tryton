@@ -169,6 +169,45 @@ class IrTestCase(ModuleTestCase):
             sequence.save()
 
     @with_transaction()
+    def test_sequence_get(self):
+        "Test get sequences"
+        pool = Pool()
+        Sequence = pool.get('ir.sequence')
+        SequenceType = pool.get('ir.sequence.type')
+        try:
+            Group = pool.get('res.group')
+            groups = Group.search([])
+        except KeyError:
+            groups = []
+
+        sequence_type = SequenceType(name='Test', groups=groups)
+        sequence_type.save()
+        sequence = Sequence(name='Test Sequence', sequence_type=sequence_type)
+        sequence.save()
+
+        self.assertEqual(sequence.get(), '1')
+
+    @with_transaction()
+    def test_sequence_get_many(self):
+        "Test get many sequences"
+        pool = Pool()
+        Sequence = pool.get('ir.sequence')
+        SequenceType = pool.get('ir.sequence.type')
+        try:
+            Group = pool.get('res.group')
+            groups = Group.search([])
+        except KeyError:
+            groups = []
+
+        sequence_type = SequenceType(name='Test', groups=groups)
+        sequence_type.save()
+        sequence = Sequence(name='Test Sequence', sequence_type=sequence_type)
+        sequence.save()
+
+        self.assertEqual(
+            list(sequence.get_many(10)), list(map(str, range(1, 11))))
+
+    @with_transaction()
     def test_global_search(self):
         'Test Global Search'
         pool = Pool()
@@ -515,6 +554,7 @@ class IrCronTestCase(TestCase):
         cron.interval_number = 1
         cron.interval_type = 'days'
         cron.hour = 1
+        cron.minute = 0
 
         # Quebec is UTC-5
         self.assertEqual(
@@ -529,6 +569,7 @@ class IrCronTestCase(TestCase):
         cron.interval_number = 1
         cron.interval_type = 'days'
         cron.hour = 2
+        cron.minute = 30
 
         # 2022-03-13 is the day of DST switch
         # Quebec is UTC-4
@@ -542,6 +583,7 @@ class IrCronTestCase(TestCase):
         cron = self._get_cron()
         cron.interval_number = 1
         cron.interval_type = 'hours'
+        cron.minute = 30
 
         # 2022-11-06 is the day of DST switch
         # Quebec is UTC-5

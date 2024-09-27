@@ -264,7 +264,7 @@ class Database(DatabaseInterface):
         for count in range(retry, -1, -1):
             try:
                 conn = self._connpool.getconn()
-            except PoolError:
+            except (PoolError, DatabaseOperationalError):
                 if count and not self._connpool.closed:
                     logger.info('waiting a connection')
                     time.sleep(1)
@@ -360,7 +360,7 @@ class Database(DatabaseInterface):
                         'Test failed for "%s"', db_name, exc_info=True)
                     continue
         finally:
-            self.put_connection(connection)
+            self.put_connection(connection, close=True)
 
         self.__class__._list_cache[hostname] = res
         self.__class__._list_cache_timestamp[hostname] = now
@@ -405,7 +405,7 @@ class Database(DatabaseInterface):
         try:
             return self._test(connection, hostname=hostname)
         finally:
-            self.put_connection(connection)
+            self.put_connection(connection, close=True)
 
     @classmethod
     def _test(cls, connection, hostname=None):
@@ -732,6 +732,18 @@ class Database(DatabaseInterface):
         cursor = connection.cursor()
         cursor.execute(SQL("DROP SEQUENCE {}").format(
                 Identifier(name)))
+
+    def sequence_nextval(self, connection, name):
+        cursor = connection.cursor()
+        cursor.execute('SELECT NEXTVAL(%s)', (name,))
+        return cursor.fetchone()[0]
+
+    def sequence_nextvals(self, connection, name, n):
+        cursor = connection.cursor()
+        cursor.execute(
+            'SELECT NEXTVAL(%s) FROM generate_series(1, %s)', (name, n))
+        for val, in cursor:
+            yield val
 
     def sequence_next_number(self, connection, name):
         cursor = connection.cursor()

@@ -34,12 +34,12 @@ from genshi.filters import Translator
 from genshi.template.text import TextTemplate
 
 from trytond.config import config
-from trytond.exceptions import UserError
 from trytond.i18n import gettext
+from trytond.model.exceptions import AccessError
 from trytond.pool import Pool, PoolBase
 from trytond.rpc import RPC
 from trytond.tools import slugify
-from trytond.transaction import Transaction
+from trytond.transaction import Transaction, check_access
 from trytond.url import URLMixin
 
 try:
@@ -141,18 +141,34 @@ class Report(URLMixin, PoolBase):
             }
 
     @classmethod
-    def check_access(cls):
+    def check_access(cls, action, model, ids):
         pool = Pool()
         ActionReport = pool.get('ir.action.report')
         User = pool.get('res.user')
+        Group = pool.get('res.group')
+        ModelAccess = pool.get('ir.model.access')
 
         if Transaction().user == 0:
             return
 
-        groups = set(User.get_groups())
-        report_groups = ActionReport.get_groups(cls.__name__)
-        if report_groups and not groups & report_groups:
-            raise UserError('Calling report %s is not allowed!' % cls.__name__)
+        with check_access():
+            groups = set(User.get_groups())
+            report_groups = ActionReport.get_groups(cls.__name__, action.id)
+            if report_groups and not groups & report_groups:
+                groups = Group.browse(User.get_groups())
+                raise AccessError(
+                    gettext(
+                        'ir.msg_access_report_error',
+                        report=cls.__name__),
+                    gettext(
+                        'ir.msg_context_groups',
+                        groups=', '.join(g.rec_name for g in groups)))
+
+            if model:
+                Model = pool.get(model)
+                ModelAccess.check(model, 'read')
+                # Check read access
+                Model.read(ids, ['id'])
 
     @classmethod
     def header_key(cls, record):
@@ -172,7 +188,6 @@ class Report(URLMixin, PoolBase):
         '''
         pool = Pool()
         ActionReport = pool.get('ir.action.report')
-        cls.check_access()
         context = Transaction().context
         ids = list(map(int, ids))
 
@@ -185,6 +200,9 @@ class Report(URLMixin, PoolBase):
             action_report = action_reports[0]
         else:
             action_report = ActionReport(action_id)
+
+        model = action_report.model or data.get('model')
+        cls.check_access(action_report, model, ids)
 
         def report_name(records, reserved_length=0):
             names = []
@@ -213,10 +231,10 @@ class Report(URLMixin, PoolBase):
                 name += '__' + str(record_count - len(names))
             return name
 
-        records = []
-        model = action_report.model or data.get('model')
         if model:
             records = cls._get_records(ids, model, data)
+        else:
+            records = []
 
         if not records:
             groups = [[]]
@@ -263,7 +281,7 @@ class Report(URLMixin, PoolBase):
                         records, len(action_report_name) + len(join_string))]))
         else:
             filename = action_report_name
-        return (oext, content, action_report.direct_print, filename)
+        return (oext, content, bool(action_report.direct_print), filename)
 
     @classmethod
     def _execute(cls, records, header, data, action):

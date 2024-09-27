@@ -1,9 +1,9 @@
 # This file is part of Tryton.  The COPYRIGHT file at the top level of
 # this repository contains the full copyright notices and license terms.
 import datetime as dt
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from decimal import Decimal
-from itertools import chain, combinations, groupby
+from itertools import chain, groupby
 
 from genshi.template.text import TextTemplate
 from sql import Null
@@ -145,6 +145,11 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
         help="The date from which the payment term is calculated.\n"
         "Leave empty to use the invoice date.")
     sequence = fields.Integer("Sequence", readonly=True)
+    sequence_type_cache = fields.Selection([
+            (None, ""),
+            ('invoice', "Invoice"),
+            ('credit_note', "Credit Note"),
+            ], "Sequence Type Cache", readonly=True)
     party = fields.Many2One(
         'party.party', 'Party', required=True, states=_states,
         context={
@@ -245,6 +250,11 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
                 | ~Eval('currency')
                 | ~Eval('account')),
             })
+    line_lines = fields.One2Many(
+        'account.invoice.line', 'invoice', "Line - Lines", readonly=True,
+        filter=[
+            ('type', '=', 'line'),
+            ])
     taxes = fields.One2Many(
         'account.invoice.tax', 'invoice', 'Tax Lines',
         domain=[
@@ -355,24 +365,25 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
                 Index(t, (t.reference, Index.Similarity())),
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['draft', 'validated', 'posted'])),
                 Index(t, (t.total_amount_cache, Index.Range())),
                 Index(
                     t,
-                    (t.total_amount_cache, Index.Equality()),
+                    (t.total_amount_cache, Index.Equality(cardinality='low')),
                     include=[t.id],
                     where=t.total_amount_cache == Null),
                 Index(t, (t.untaxed_amount_cache, Index.Range())),
                 Index(
                     t,
-                    (t.untaxed_amount_cache, Index.Equality()),
+                    (t.untaxed_amount_cache,
+                        Index.Equality(cardinality='low')),
                     include=[t.id],
                     where=t.untaxed_amount_cache == Null),
                 Index(t, (t.tax_amount_cache, Index.Range())),
                 Index(
                     t,
-                    (t.tax_amount_cache, Index.Equality()),
+                    (t.tax_amount_cache, Index.Equality(cardinality='low')),
                     include=[t.id],
                     where=t.tax_amount_cache == Null),
                 })
@@ -736,8 +747,7 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
         for invoice in invoices_no_cache:
             zero = invoice.currency.round(Decimal(0))
             untaxed_amount[invoice.id] = sum(
-                (line.amount for line in invoice.lines
-                    if line.type == 'line'), zero)
+                (line.amount for line in invoice.line_lines), zero)
             total_amount[invoice.id] = (
                 untaxed_amount[invoice.id] + tax_amount[invoice.id])
 
@@ -1207,7 +1217,7 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
             today = Date.today()
         self.update_taxes(exception=True)
         move_lines = []
-        for line in self.lines:
+        for line in self.line_lines:
             move_lines += line.get_move_lines()
         for tax in self.taxes:
             move_lines += tax.get_move_lines()
@@ -1259,7 +1269,6 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
         pool = Pool()
         Date = pool.get('ir.date')
         Lang = pool.get('ir.lang')
-        Sequence = pool.get('ir.sequence.strict')
 
         sequences = set()
 
@@ -1271,6 +1280,7 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
             def invoice_date(invoice):
                 return invoice.invoice_date or today
 
+            to_number = defaultdict(list)
             grouped_invoices = sorted(grouped_invoices, key=invoice_date)
 
             for invoice in grouped_invoices:
@@ -1289,13 +1299,15 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
 
                 if not invoice.invoice_date and invoice.type == 'out':
                     invoice.invoice_date = today
-                invoice.number, invoice.sequence = invoice.get_next_number()
-                if invoice.type == 'out' and invoice.sequence not in sequences:
+                invoice.sequence_type_cache = invoice._sequence_type
+                sequence, sequence_date = invoice._number_sequence()
+                to_number[(sequence, sequence_date)].append(invoice)
+                if invoice.type == 'out' and sequence not in sequences:
                     date = invoice_date(invoice)
                     # Do not need to lock the table
-                    # because sequence.get_id is sequential
+                    # because sequence.get_many is sequential
                     after_invoices = cls.search([
-                            ('sequence', '=', invoice.sequence),
+                            ('sequence', '=', sequence),
                             ('invoice_date', '>', date),
                             ],
                         limit=1, order=[('invoice_date', 'DESC')])
@@ -1304,14 +1316,21 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
                         raise InvoiceNumberError(
                             gettext('account_invoice.msg_invoice_number_after',
                                 invoice=invoice.rec_name,
-                                sequence=Sequence(invoice.sequence).rec_name,
+                                sequence=sequence.rec_name,
                                 date=Lang.get().strftime(date),
                                 after_invoice=after_invoice.rec_name))
-                    sequences.add(invoice.sequence)
+                    sequences.add(sequence)
+            for (sequence, date), n_invoices in to_number.items():
+                with Transaction().set_context(
+                        date=date, company=company.id):
+                    for invoice, number in zip(
+                            n_invoices, sequence.get_many(len(n_invoices))):
+                        invoice.sequence = sequence
+                        invoice.number = number
         cls.save(invoices)
 
-    def get_next_number(self, pattern=None):
-        "Return invoice number and sequence id used"
+    def _number_sequence(self, pattern=None):
+        "Returns the sequence and date to use for numbering"
         pool = Pool()
         Period = pool.get('account.period')
 
@@ -1332,29 +1351,30 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
 
         for invoice_sequence in fiscalyear.invoice_sequences:
             if invoice_sequence.match(pattern):
-                sequence = getattr(
-                    invoice_sequence, self._sequence_field)
-                break
+                return getattr(
+                    invoice_sequence, self._sequence_field), accounting_date
         else:
             raise InvoiceNumberError(
                 gettext('account_invoice.msg_invoice_no_sequence',
                     invoice=self.rec_name,
                     fiscalyear=fiscalyear.rec_name))
-        with Transaction().set_context(
-                date=accounting_date,
-                company=self.company.id):
-            return sequence.get(), sequence.id
+
+    @property
+    def _sequence_type(self):
+        if (all(l.amount <= 0 for l in self.line_lines)
+                and self.total_amount < 0):
+            return 'credit_note'
+        else:
+            return 'invoice'
+
+    @property
+    def sequence_type(self):
+        return self.sequence_type_cache or self._sequence_type
 
     @property
     def _sequence_field(self):
         "Returns the field name of invoice_sequence to use"
-        field = self.type
-        if (all(l.amount <= 0 for l in self.lines if l.product)
-                and self.total_amount < 0):
-            field += '_credit_note'
-        else:
-            field += '_invoice'
-        return field + '_sequence'
+        return f'{self.type}_{self.sequence_type}_sequence'
 
     def get_tax_identifier(self):
         "Return the default computed tax identifier"
@@ -1421,7 +1441,7 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
 
     def get_origins(self, name):
         return ', '.join(set(filter(None,
-                    (l.origin_name for l in self.lines))))
+                    (l.origin_name for l in self.line_lines))))
 
     @classmethod
     def view_attributes(cls):
@@ -1536,38 +1556,20 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
         '''
         Return list of lines and the remainder to make reconciliation.
         '''
-        Result = namedtuple('Result', ['lines', 'remainder'])
+        pool = Pool()
+        Line = pool.get('account.move.line')
+
+        assert currency in {self.currency, self.company.currency}
 
         if party is None:
             party = self.party
-
-        assert currency in [self.currency, self.company.currency]
-
-        def balance(line):
-            if currency == line.second_currency:
-                return line.amount_second_currency
-            elif currency == self.company.currency:
-                return line.debit - line.credit
-            else:
-                return 0
-
         lines = [
             l for l in self.payment_lines + self.lines_to_pay
             if not l.reconciliation
             and (not self.account.party_required or l.party == party)]
 
-        remainder = sum(map(balance, lines)) - amount
-        best = Result(lines, remainder)
-        if remainder:
-            for n in range(len(lines) - 1, 0, -1):
-                for comb_lines in combinations(lines, n):
-                    remainder = sum(map(balance, comb_lines)) - amount
-                    result = Result(list(comb_lines), remainder)
-                    if currency.is_zero(remainder):
-                        return result
-                    if abs(remainder) < abs(best.remainder):
-                        best = result
-        return best
+        return Line.find_best_reconciliation(
+            lines, currency, amount=amount)
 
     def pay_invoice(
             self, amount, payment_method, date, description=None,
@@ -1915,7 +1917,7 @@ class Invoice(Workflow, ModelSQL, ModelView, TaxableMixin, InvoiceReportMixin):
         Warning = pool.get('res.user.warning')
         for invoice in invoices:
             different_lines = []
-            for line in invoice.lines:
+            for line in invoice.line_lines:
                 test_line = Line(line.id)
                 test_line.on_change_product()
                 if (set(test_line.taxes) != set(line.taxes)
@@ -2318,7 +2320,9 @@ class InvoiceLine(sequence_ordered(), ModelSQL, ModelView, TaxableMixin):
                 & ~Id('account', 'group_account_admin').in_(
                     Eval('context', {}).get('groups', []))),
                 })
-    summary = fields.Function(fields.Char('Summary'), 'on_change_with_summary')
+    summary = fields.Function(
+        fields.Char('Summary'), 'on_change_with_summary',
+        searcher='search_summary')
     note = fields.Text('Note')
     taxes = fields.Many2Many('account.invoice.line-account.tax',
         'line', 'tax', 'Taxes',
@@ -2513,6 +2517,10 @@ class InvoiceLine(sequence_ordered(), ModelSQL, ModelView, TaxableMixin):
     @fields.depends('description')
     def on_change_with_summary(self, name=None):
         return firstline(self.description or '')
+
+    @classmethod
+    def search_summary(cls, name, clause):
+        return [('description', *clause[1:])]
 
     @fields.depends(
         'type', 'quantity', 'unit_price', 'taxes_deductible_rate', 'invoice',

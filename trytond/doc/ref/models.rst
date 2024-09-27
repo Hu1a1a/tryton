@@ -623,6 +623,14 @@ Class attributes are:
 
 Class methods:
 
+.. classmethod:: ModelSQL.__setup_indexes__()
+
+   Setup the :attr:`~ModelSQL._sql_indexes` before creating them on the table.
+
+   .. note::
+      The method is called only once when all the models have been setup by the
+      :class:`~trytond.pool.Pool`.
+
 .. classmethod:: ModelSQL.__table__()
 
    Return a SQL Table instance for the Model.
@@ -798,23 +806,24 @@ Available options are:
 
 Apply unaccent function if the database supports it.
 
-.. attribute:: Index.Usage(\*\*options)
+.. attribute:: Index.Usage([cardinality[, \*\*options]])
 
 Represent a usage of a SQL expression.
+Available cardinality is ``low``, ``normal`` (default) and ``high``.
 Available options are:
 
    * ``collation``: the name of the collation
    * ``order``: the sort order
 
-.. attribute:: Index.Equality(\*\*options)
+.. attribute:: Index.Equality([cardinality[, \*\*options]])
 
 Represent an equality usage.
 
-.. attribute:: Index.Range(\*\*options)
+.. attribute:: Index.Range([cardinality[, \*\*options]])
 
 Represent an range usage.
 
-.. attribute:: Index.Similarity(\*\*options)
+.. attribute:: Index.Similarity([cardinality[, \*\*options]])
 
 Represent a similar usage only for text.
 Additional options are available:

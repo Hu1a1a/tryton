@@ -72,7 +72,10 @@ class Inventory(Workflow, ModelSQL, ModelView):
         super(Inventory, cls).__setup__()
         t = cls.__table__()
         cls._sql_indexes.add(
-            Index(t, (t.state, Index.Equality()), where=t.state == 'draft'))
+            Index(
+                t,
+                (t.state, Index.Equality(cardinality='low')),
+                where=t.state == 'draft'))
         cls._order.insert(0, ('date', 'DESC'))
         cls._transitions |= set((
                 ('draft', 'done'),
@@ -422,7 +425,7 @@ class InventoryLine(ModelSQL, ModelView):
     @classmethod
     def search_inventory_location(cls, name, clause):
         nested = clause[0][len(name):]
-        return [('inventory.' + name + nested, *clause[1:])]
+        return [('inventory.location' + nested, *clause[1:])]
 
     @fields.depends('inventory', '_parent_inventory.date')
     def on_change_with_inventory_date(self, name=None):

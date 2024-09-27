@@ -384,11 +384,15 @@ class Payment(Workflow, ModelSQL, ModelView):
     def __setup__(cls):
         super(Payment, cls).__setup__()
         t = cls.__table__()
-        cls._sql_indexes.add(
-            Index(
-                t, (t.state, Index.Equality()),
-                where=t.state.in_([
-                        'draft', 'submitted', 'approved', 'processing'])))
+        cls._sql_indexes.update({
+                Index(
+                    t, (t.state, Index.Equality(cardinality='low')),
+                    where=t.state.in_([
+                            'draft', 'submitted', 'approved', 'processing'])),
+                Index(
+                    t, (t.line, Index.Range()),
+                    where=t.state != 'failed'),
+                })
         cls._order.insert(0, ('date', 'DESC'))
         cls._transitions |= set((
                 ('draft', 'submitted'),
@@ -556,13 +560,43 @@ class Payment(Workflow, ModelSQL, ModelView):
         return super().copy(payments, default=default)
 
     @classmethod
+    def create(cls, vlist):
+        pool = Pool()
+        Line = pool.get('account.move.line')
+        payments = super().create(vlist)
+        lines = {p.line for p in payments if p.line}
+        if lines:
+            Line.set_payment_amount(list(lines))
+        return payments
+
+    @classmethod
+    def write(cls, *args):
+        pool = Pool()
+        Line = pool.get('account.move.line')
+        actions = iter(args)
+        lines = set()
+        for payments, values in zip(actions, actions):
+            if values.keys() & {'line', 'amount', 'state'}:
+                lines.update(p.line for p in payments if p.line)
+            if line := values.get('line'):
+                lines.add(Line(line))
+        super().write(*args)
+        if lines:
+            Line.set_payment_amount(list(lines))
+
+    @classmethod
     def delete(cls, payments):
+        pool = Pool()
+        Line = pool.get('account.move.line')
         for payment in payments:
             if payment.state != 'draft':
                 raise AccessError(
                     gettext('account_payment.msg_payment_delete_draft',
                         payment=payment.rec_name))
+        lines = {p.line for p in payments if p.line}
         super(Payment, cls).delete(payments)
+        if lines:
+            Line.set_payment_amount(list(lines))
 
     @classmethod
     @ModelView.button

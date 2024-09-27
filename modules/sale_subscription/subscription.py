@@ -169,7 +169,7 @@ class Subscription(Workflow, ModelSQL, ModelView):
                 Index(t, (t.reference, Index.Similarity())),
                 Index(
                     t,
-                    (t.state, Index.Equality()),
+                    (t.state, Index.Equality(cardinality='low')),
                     where=t.state.in_(['draft', 'quotation', 'running'])),
                 })
         cls._order = [
@@ -276,12 +276,16 @@ class Subscription(Workflow, ModelSQL, ModelView):
         Config = pool.get('sale.configuration')
 
         config = Config(1)
-        for subscription in subscriptions:
-            if subscription.number:
-                continue
-            subscription.number = config.get_multivalue(
-                'subscription_sequence',
-                company=subscription.company.id).get()
+        for company, c_subscriptions in groupby(
+                subscriptions, key=lambda s: s.company):
+            c_subscriptions = [s for s in c_subscriptions if not s.number]
+            if c_subscriptions:
+                sequence = config.get_multivalue(
+                    'subscription_sequence', company=company.id)
+                for subscription, number in zip(
+                        c_subscriptions,
+                        sequence.get_many(len(c_subscriptions))):
+                    subscription.number = number
         cls.save(subscriptions)
 
     def compute_next_invoice_date(self):
@@ -957,7 +961,7 @@ class LineConsumption(ModelSQL, ModelView):
             ('unit', consumption.line.unit),
             ('product', consumption.line.service.product),
             ('unit_price', consumption.line.unit_price),
-            ('description', consumption.line.description),
+            ('description', consumption.line.description or ''),
             ('origin', consumption.line),
             )
 

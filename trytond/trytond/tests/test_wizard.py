@@ -73,6 +73,25 @@ class WizardTestCase(TestCase):
         self.assertEqual(group_b.name, 'Group B')
 
     @with_transaction()
+    def test_session_without_access(self):
+        "Create session for wizard without access"
+        pool = Pool()
+        ActionWizard = pool.get('ir.action.wizard')
+        Group = pool.get('res.group')
+        Wizard = pool.get('test.test_wizard', type='wizard')
+
+        group = Group(name="Test")
+        group.save()
+        action_wizard, = ActionWizard.search([
+                ('wiz_name', '=', 'test.test_wizard'),
+                ])
+        action_wizard.groups = [group]
+        action_wizard.save()
+
+        with self.assertRaises(AccessError):
+            session_id, start_state, end_state = Wizard.create()
+
+    @with_transaction()
     def test_execute(self):
         'Execute Wizard'
         pool = Pool()
@@ -110,6 +129,28 @@ class WizardTestCase(TestCase):
 
     @with_transaction()
     def test_execute_without_access(self):
+        "Execute wizard without access"
+        pool = Pool()
+        ActionWizard = pool.get('ir.action.wizard')
+        Group = pool.get('res.group')
+        Wizard = pool.get('test.test_wizard', type='wizard')
+
+        session_id, start_state, end_state = Wizard.create()
+
+        group = Group(name="Test")
+        group.save()
+        action_wizard, = ActionWizard.search([
+                ('wiz_name', '=', 'test.test_wizard'),
+                ])
+        action_wizard.groups = [group]
+        action_wizard.save()
+
+        with self.assertRaises(AccessError):
+            with Transaction().set_context(active_model='test.access'):
+                Wizard.execute(session_id, {}, start_state)
+
+    @with_transaction()
+    def test_execute_without_model_access(self):
         "Execute wizard without model access"
         pool = Pool()
         Wizard = pool.get('test.test_wizard', type='wizard')

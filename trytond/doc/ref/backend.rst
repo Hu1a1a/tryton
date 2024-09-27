@@ -188,6 +188,14 @@ Database
 
    Delete the named sequence using the ``connection``.
 
+.. method:: Database.sequence_nextval(connection, name)
+
+   Advances the named sequence and returns its next value.
+
+.. method:: Database.sequence_nextvals(connection, name, n)
+
+   Advances the named sequence n times and yields the next values.
+
 .. method:: Database.sequence_next_number(connection, name)
 
    Return the next number fo the named sequence using the ``connection``.
